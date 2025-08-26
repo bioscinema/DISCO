@@ -1,15 +1,23 @@
-Package: DOLPHIN
+Package: DiSCoB
 Type: Package
-Title: Detection of Odds and Logistic Perfect-separation, Handling INflation
+Title: Diagnosis & Separation Correction (Bayesian)
 Version: 0.1.0
-Authors@R: 
-    person(given = "First", family = "Last", role = c("aut", "cre"), email = "you@example.com")
+Authors@R:
+    person("Chenyu", "Liu", email = "cxl1299@case.edu", role = c("aut", "cre"))
 Description: Provides functions to compute the Rand index, evaluate univariate separation, and perform LP-based checks for latent (multivariate) separation in binary outcome datasets.
 License: MIT + file LICENSE
 Encoding: UTF-8
 LazyData: true
+Depends: R (>= 4.1)
 Imports:
     dplyr,
-    lpSolve
+    clue,
+    overlapping,
+    rlang
+Suggests:
+    testthat (>= 3.0.0),
+    knitr,
+    rmarkdown
+Config/testthat/edition: 3
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.2.0
+RoxygenNote: 7.3.2

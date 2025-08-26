@@ -9,7 +9,7 @@
 #' @return For single X: a list with \code{type} ("perfect separation", "quasi-complete separation", or "no separation problem"), and optionally \code{removed} and \code{message}. For combinations: named list of results per subset.
 #' @importFrom lpSolve lp
 #' @export
-check_separation <- function(y, X, test_combinations = FALSE, min_vars = 2, only_perfect = FALSE) {
+latent_separation <- function(y, X, test_combinations = FALSE, min_vars = 2, only_perfect = FALSE) {
   var_names <- colnames(X)
 
   if (test_combinations) {
@@ -18,7 +18,7 @@ check_separation <- function(y, X, test_combinations = FALSE, min_vars = 2, only
     for (k in seq(min_vars, p)) {
       for (cols in combn(p, k, simplify = FALSE)) {
         subset_name <- paste(var_names[cols], collapse = "_")
-        results[[subset_name]] <- check_separation(y, X[, cols, drop = FALSE], FALSE)
+        results[[subset_name]] <- latent_separation(y, X[, cols, drop = FALSE], FALSE)
       }
     }
     if (only_perfect) {

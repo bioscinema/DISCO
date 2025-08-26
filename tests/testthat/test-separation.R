@@ -1,5 +1,5 @@
 library(testthat)
-library(DOLPHIN)
+library(DiSCoB)
 
 # -------------------------------------------------------------------
 # Test on uni-separation
@@ -7,20 +7,20 @@ library(DOLPHIN)
 
 test_that("No separation when mixed values", {
   df <- data.frame(Y = c(0,1,0,1), X = c(1,2,2,1))
-  res <- separation(df, "X")
-  expect_equal(res$separation_type, "No Separation Problem")
+  res <- uni_separation(df, "X")
+  expect_equal(res$separation_type, "No separation problem")
 })
 
 test_that("Perfect separation when mixed values", {
   df <- data.frame(Y = c(0,1,0,1), X = c(-1,2,-2,1))
-  res <- separation(df, "X")
-  expect_equal(res$separation_type, "Complete (Perfect) Separation")
+  res <- uni_separation(df, "X")
+  expect_equal(res$separation_type, "Perfect separation")
 })
 
 test_that("Quasi separation when mixed values", {
   df <- data.frame(Y = c(0,1,0,1), X = c(-3,-2,-2,1))
-  res <- separation(df, "X")
-  expect_equal(res$separation_type, "Quasi Complete Separation")
+  res <- uni_separation(df, "X")
+  expect_equal(res$separation_type, "Quasi-complete separation")
 })
 
 
@@ -31,7 +31,7 @@ test_that("Detect no latent separation", {
   set.seed(2025)
   y <- sample(0:1, 20, TRUE)
   X <- matrix(rnorm(20*3), 20, 3)
-  res <- check_separation(y, X)
+  res <- latent_separation(y, X)
   expect_equal(res$type, "no separation problem")
 })
 
@@ -42,7 +42,7 @@ test_that("Detect latent perfect separation", {
     X1 = c(-1.86, -0.81, 1.32, -0.40,  0.91,  2.49,  0.34,  0.25),
     X2 = c( 0.52,  1.07,  0.60,  0.67, -1.39,  0.16, -1.40, -0.09)
   )
-  res <- check_separation(y, X)
+  res <- latent_separation(y, X)
   expect_equal(res$type, "perfect separation")
 })
 
@@ -52,7 +52,7 @@ test_that("Detect latent quasi-complete separation", {
     X1 = c(-1.86, -0.81, 1.32, 0.40,  0.91,  2.49,  0.34,  0.25),
     X2 = c( 0.52,  1.07, 0.60, -0.67, -1.39,  0.16, -1.40, -0.09)
   )
-  res <- check_separation(y, X)
+  res <- latent_separation(y, X)
   expect_equal(res$type, "quasi-complete separation")
 })
 
@@ -69,9 +69,9 @@ X <- cbind(
   )
 
 # All subset diagnostics (quasi‐complete and perfect)
-res <- check_separation(y, X, test_combinations = TRUE, min_vars = 2)
+res <- latent_separation(y, X, test_combinations = TRUE, min_vars = 2)
 res
 
 # Only the subsets exhibiting perfect separation on all subjects
-res <- check_separation(y, X, test_combinations = TRUE, min_vars = 2, only_perfect = TRUE)
+res <- latent_separation(y, X, test_combinations = TRUE, min_vars = 2, only_perfect = TRUE)
 res
