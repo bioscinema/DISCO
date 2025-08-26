@@ -1,0 +1,15 @@
+Package: DOLPHIN
+Type: Package
+Title: Detection of Odds and Logistic Perfect-separation, Handling INflation
+Version: 0.1.0
+Authors@R: 
+    person(given = "First", family = "Last", role = c("aut", "cre"), email = "you@example.com")
+Description: Provides functions to compute the Rand index, evaluate univariate separation, and perform LP-based checks for latent (multivariate) separation in binary outcome datasets.
+License: MIT + file LICENSE
+Encoding: UTF-8
+LazyData: true
+Imports:
+    dplyr,
+    lpSolve
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.2.0
