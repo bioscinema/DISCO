@@ -2,32 +2,43 @@
 % Please edit documentation in R/Latent_separation.R
 \name{latent_separation}
 \alias{latent_separation}
-\title{LP-based latent separation detection}
+\title{LP-based latent separation detection (with optional minimal-subset search)}
 \usage{
 latent_separation(
   y,
   X,
   test_combinations = FALSE,
   min_vars = 2,
-  only_perfect = FALSE
+  only_perfect = FALSE,
+  find_minimal = FALSE,
+  mode = c("either", "perfect", "quasi"),
+  max_vars = NULL,
+  stop_at_first = FALSE
 )
 }
 \arguments{
-\item{y}{Vector of binary outcomes (0/1), or factor/character/logical (binary).}
+\item{y}{Binary outcome (0/1 or 2-level factor/character/logical).}
 
 \item{X}{Matrix or data frame of predictors (columns = variables).}
 
-\item{test_combinations}{Logical; if TRUE, tests every subset of variables of size ≥ \code{min_vars}.}
+\item{test_combinations}{If TRUE, test every subset of size ≥ min_vars (legacy exhaustive mode).}
 
-\item{min_vars}{Integer; minimum number of variables in subsets when \code{test_combinations=TRUE}.}
+\item{min_vars}{Minimum subset size to consider.}
 
-\item{only_perfect}{Logical; when testing combinations, keep only perfect separation cases.}
+\item{only_perfect}{Legacy flag for exhaustive mode (kept for compatibility).}
+
+\item{find_minimal}{If TRUE, return inclusion-minimal separating subsets using pruning.}
+
+\item{mode}{"either", "perfect", or "quasi" – what to count as a hit.}
+
+\item{max_vars}{Optional upper bound on subset size (default: all the way to p).}
+
+\item{stop_at_first}{If TRUE and find_minimal=TRUE, stop after the first minimal hit.}
 }
 \value{
-For single X: a list with \code{type} ("perfect separation", "quasi-complete separation",
-or "no separation problem"), and optionally \code{removed} and \code{message}. For combinations:
-named list of results per subset.
+If not searching: single result list {type, removed?, message}.
+If searching: list with $minimal_subsets (named by vars joined with "_").
 }
 \description{
-Check for perfect or quasi-complete separation in multivariate predictors.
+LP-based latent separation detection (with optional minimal-subset search)
 }
