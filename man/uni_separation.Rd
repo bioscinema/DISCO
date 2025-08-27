@@ -17,8 +17,8 @@ uni_separation(data, predictor, outcome = "Y")
 A list with fields:
 \itemize{
 \item \code{predictor}, \code{outcome}
-\item \code{separation_type} ("Perfect separation", "Quasi-complete separation", "No separation problem",
-"Constant outcome", "Constant predictor")
+\item \code{separation_type} ("Perfect separation", "Quasi-complete separation",
+"No separation problem", "Constant outcome", "Constant predictor")
 \item \code{separation_index} (Rand index)
 \item \code{severity_score} in \eqn{[0,1]}
 \item \code{rand_details} (list from \code{rand_index})
@@ -45,19 +45,4 @@ aligns with \code{outcome} using Hungarian matching
 \item Computes Rand index and detects boundary single-ties.
 \item Applies a non-negative threshold and computes a severity score.
 }
-}
-\section{Edge Cases}{
-
-\itemize{
-\item Constant \code{outcome}: returns early with \code{separation_type = "Constant outcome"}.
-\item Constant \code{predictor}: returns early with \code{separation_type = "Constant predictor"}.
-}
-}
-
-\examples{
-toy1 <- data.frame(Y = c(0,0,0,0,1,1,1), X = c(1,2,3,4,4,5,6))
-toy2 <- data.frame(Y = c(1,1,1,1,0,0,0,0), X = c(1,2,3,4,4,5,6,7))
-separation(toy1, "X")
-separation(toy2, "X")
-
 }

@@ -25,8 +25,8 @@
 #' @return A list with fields:
 #' \itemize{
 #'   \item \code{predictor}, \code{outcome}
-#'   \item \code{separation_type} ("Perfect separation", "Quasi-complete separation", "No separation problem",
-#'         "Constant outcome", "Constant predictor")
+#'   \item \code{separation_type} ("Perfect separation", "Quasi-complete separation",
+#'         "No separation problem", "Constant outcome", "Constant predictor")
 #'   \item \code{separation_index} (Rand index)
 #'   \item \code{severity_score} in \eqn{[0,1]}
 #'   \item \code{rand_details} (list from \code{rand_index})
@@ -34,16 +34,6 @@
 #'   \item \code{boundary_threshold} (numeric)
 #'   \item \code{overlap_prop} (numeric in [0,1], optional)
 #' }
-#'
-#' @section Edge Cases:
-#' - Constant \code{outcome}: returns early with \code{separation_type = "Constant outcome"}.
-#' - Constant \code{predictor}: returns early with \code{separation_type = "Constant predictor"}.
-#'
-#' @examples
-#' toy1 <- data.frame(Y = c(0,0,0,0,1,1,1), X = c(1,2,3,4,4,5,6))
-#' toy2 <- data.frame(Y = c(1,1,1,1,0,0,0,0), X = c(1,2,3,4,4,5,6,7))
-#' separation(toy1, "X")
-#' separation(toy2, "X")
 #'
 #' @importFrom dplyr filter
 #' @importFrom rlang .data
@@ -59,18 +49,16 @@ uni_separation <- function(data, predictor, outcome = "Y") {
   # normalize outcome to 0/1 (integer)
   y <- encode_outcome(data[[outcome]])
 
-  # --- Get a numeric x for the univariate path ---
+  # Prepare x as numeric vector if possible
   x_raw <- data[[predictor]]
   if (is.numeric(x_raw)) {
     x <- x_raw
   } else {
-    ux <- unique(x_raw)
-    k  <- length(ux)
+    ux <- unique(x_raw); k <- length(ux)
     if (is.logical(x_raw) || k == 2L) {
-      # binary -> 0/1 vector
       x <- as.integer(factor(x_raw, levels = sort(ux))) - 1L
     } else {
-      # multi-level categorical: hand off to LP on dummies and return a summary
+      # Multi-level categorical predictor: run LP on its dummies and summarize
       Xdum <- encode_predictors(data[predictor, drop = FALSE])
       lp_res <- latent_separation(y = y, X = Xdum, test_combinations = FALSE)
       return(list(
@@ -92,6 +80,7 @@ uni_separation <- function(data, predictor, outcome = "Y") {
       ))
     }
   }
+
 
   # Early exits
   if (length(unique(y)) == 1L) {

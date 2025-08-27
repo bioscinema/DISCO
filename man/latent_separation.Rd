@@ -13,16 +13,20 @@ latent_separation(
 )
 }
 \arguments{
-\item{y}{Vector of binary outcomes (0/1).}
+\item{y}{Vector of binary outcomes (0/1), or factor/character/logical (binary).}
 
 \item{X}{Matrix or data frame of predictors (columns = variables).}
 
 \item{test_combinations}{Logical; if TRUE, tests every subset of variables of size ≥ \code{min_vars}.}
 
 \item{min_vars}{Integer; minimum number of variables in subsets when \code{test_combinations=TRUE}.}
+
+\item{only_perfect}{Logical; when testing combinations, keep only perfect separation cases.}
 }
 \value{
-For single X: a list with \code{type} ("perfect separation", "quasi-complete separation", or "no separation problem"), and optionally \code{removed} and \code{message}. For combinations: named list of results per subset.
+For single X: a list with \code{type} ("perfect separation", "quasi-complete separation",
+or "no separation problem"), and optionally \code{removed} and \code{message}. For combinations:
+named list of results per subset.
 }
 \description{
 Check for perfect or quasi-complete separation in multivariate predictors.
