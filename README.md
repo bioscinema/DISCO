@@ -141,17 +141,17 @@ This table summarize univariate screen results of each predictor against the out
 - **Rows Used (Original Indices)**  
   Original dataset row numbers included in the analysis for that predictor (not re-indexed after filtering).
 
----
+- Example
 
-- **X1** has **Separation Index = 1.000**, **Severity = 1.000**, and is labeled **Perfect Separation** with **N Used = 9**.  
+  - **X1** has **Separation Index = 1.000**, **Severity = 1.000**, and is labeled **Perfect Separation** with **N Used = 9**.  
   → X1 alone perfectly separates `Y` on the complete-case subset (rows `1, 2, 4, 5, 6, 7, 9, 10, 12`). Standard logistic regression MLE will not be finite; consider remedies (e.g., Firth penalization, Bayesian priors, or data/model modifications).
 
-- **Race, L1, X2** show **Separation Index ≈ 0.57–0.61**, **Severity = 0.000**, and **No Problem**.  
+  - **Race, L1, X2** show **Separation Index ≈ 0.57–0.61**, **Severity = 0.000**, and **No Problem**.  
   → These predictors do **not** induce separation in univariate fits on their respective complete-case samples (N Used = 8–9).
 
-- All rows used are reported as **original indices**. Since the method is *Complete*, the full list is shown for each predictor.
+  - All rows used are reported as **original indices**. Since the method is *Complete*, the full list is shown for each predictor.
 
-
+---
 ```r
 # Latent: minimal subsets, complete-case per subset
 res_lat_cc <- latent_separation(
@@ -184,18 +184,18 @@ This table summarizes subsets of predictors that yield separation in a **complet
 - **Rows Used (Original Indices)**  
   The original dataset row numbers included in the complete-case fit for that subset. We always report **original indices** (not re-indexed after filtering).
   
+
+- Example
+  - **X1_X2, X2_L1, Race_L1, X1_Race, X2_Race**  
+    - **Separation:** Perfect Separation  
+    - **Removed And Rest Reach Perfect:** *(blank)* → already Perfect; no rows need removal.  
+    - **N Used:** 6–7, with original indices listed in the last column.
+
+  - **X1_L1**  
+    - **Separation:** Quasi-Complete Separation  
+    - **Removed And Rest Reach Perfect:** `5`  
+    - **Interpretation:** The complete-case fit used rows `1, 4, 5, 7, 9, 10`. If you drop row **5**, the remaining rows (`1, 4, 7, 9, 10`) would yield **Perfect Separation** for subset `{X1, L1}`.
 ---
-
-- **X1_X2, X2_L1, Race_L1, X1_Race, X2_Race**  
-  - **Separation:** Perfect Separation  
-  - **Removed And Rest Reach Perfect:** *(blank)* → already Perfect; no rows need removal.  
-  - **N Used:** 6–7, with original indices listed in the last column.
-
-- **X1_L1**  
-  - **Separation:** Quasi-Complete Separation  
-  - **Removed And Rest Reach Perfect:** `5`  
-  - **Interpretation:** The complete-case fit used rows `1, 4, 5, 7, 9, 10`. If you drop row **5**, the remaining rows (`1, 4, 7, 9, 10`) would yield **Perfect Separation** for subset `{X1, L1}`.
-
 
 ```r
 # Latent minimal subsets (imputed)
@@ -235,12 +235,12 @@ This table summarizes subsets of predictors that yield separation in a **impuata
   - In **imputed** mode this is hidden by default (shown as “—”) to avoid long lists.  
   - Set `show_rows_used = TRUE` to preview indices. Indices are always reported in the **original** numbering (not re-indexed after filtering/imputation).
 
+- Example
+  - All listed pairs (e.g., **X1_X2**, **X1_Race**, **X2_Race**, **Race_L1**) achieve **Perfect Separation** under the specified imputation scheme with **N Used = 11**.
+  - **Removed And Rest Reach Perfect** is blank for each row → no removals are needed because separation is already perfect.
+  - **Practical note:** Separation that appears **after imputation** can reflect either genuine structure or an artifact of the imputation rule (e.g., adding a “Missing” level). Consider sensitivity checks (complete-case vs. imputed analyses), penalized likelihood (Firth), or Bayesian priors when fitting logistic models in the presence of separation.
+
 ---
-
-- All listed pairs (e.g., **X1_X2**, **X1_Race**, **X2_Race**, **Race_L1**) achieve **Perfect Separation** under the specified imputation scheme with **N Used = 11**.
-- **Removed And Rest Reach Perfect** is blank for each row → no removals are needed because separation is already perfect.
-- **Practical note:** Separation that appears **after imputation** can reflect either genuine structure or an artifact of the imputation rule (e.g., adding a “Missing” level). Consider sensitivity checks (complete-case vs. imputed analyses), penalized likelihood (Firth), or Bayesian priors when fitting logistic models in the presence of separation.
-
 
 ### API cheatsheet
 ```r
