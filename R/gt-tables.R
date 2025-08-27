@@ -15,10 +15,10 @@
 }
 
 .type_icon <- function(x) {
-  if (isTRUE(grepl("^Perfect", x))) return("✅ **Perfect**")
-  if (isTRUE(grepl("^Quasi", x)))   return("⚠️ **Quasi**")
-  if (isTRUE(grepl("^No ", x)))     return("🟢 **No problem**")
-  if (isTRUE(grepl("^Constant", x)))return("ℹ️ **Constant**")
+  if (isTRUE(grepl("^Perfect", x))) return("perfect separation")
+  if (isTRUE(grepl("^Quasi", x)))   return("quasi-complete separation")
+  if (isTRUE(grepl("^No ", x)))     return("no problem")
+  if (isTRUE(grepl("^Constant", x)))return("all constant")
   x
 }
 

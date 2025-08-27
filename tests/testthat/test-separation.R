@@ -432,7 +432,8 @@ res_lat_cc <- latent_separation(
   find_minimal = TRUE,
   missing = "complete"
 )
-gt_latent_separation(res_lat_cc, title = "Latent Minimal Subsets — Complete-case", show_rows_used = TRUE)
+tab_lat_com <- gt_latent_separation(res_lat_cc, title = "Latent Minimal Subsets — Complete-case", show_rows_used = TRUE)
+gt::gtsave(tab_lat_com, "man/figures/readme-latent-gt-complete.png")
 
 # 2. Latent: minimal subsets, imputed per subset
 res_lat_imp <- latent_separation(

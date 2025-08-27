@@ -117,6 +117,17 @@ gt_uni_separation_all(df_miss, outcome = "Y", missing = "complete")
 ![Univariate DISCO table](man/figures/readme-uni-gt-all.png)
 
 ```r
+# Latent: minimal subsets, complete-case per subset
+res_lat_cc <- latent_separation(
+  y = df$Y,
+  X = df[, c("X1","X2","Race","L1")],
+  find_minimal = TRUE,
+  missing = "complete"
+)
+```
+![Univariate DISCO table](man/figures/readme-latent-gt-complete.png)
+
+```r
 # Latent minimal subsets (imputed)
 res_lat_imp <- latent_separation(
   y = df_miss$Y,
