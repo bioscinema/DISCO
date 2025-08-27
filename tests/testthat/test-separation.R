@@ -398,8 +398,8 @@ res_uni_cc <- uni_separation(df, "X1", "Y", missing = "complete")
 gt_uni_separation(res_uni_cc, title = "Univariate (X1 vs Y) — Complete-case")
 
 # All predictors vs Y, complete-case
-gt_uni_separation_all(df, outcome = "Y", missing = "complete")
-
+tab_uni_all <- gt_uni_separation_all(df, outcome = "Y", missing = "complete")
+gt::gtsave(tab_uni_all, "man/figures/readme-uni-gt-all.png")
 
 # 2. Univariate: impute with explicit rules
 res_uni_imp <- uni_separation(
@@ -414,6 +414,7 @@ gt_uni_separation_all(
   impute_args = list(numeric_method = "mean", categorical_method = "missing"),
   only_hits = TRUE
 )
+
 
 # 4. Keep only Perfect/Quasi rows in the all-predictors summary
 gt_uni_separation_all(
@@ -441,7 +442,8 @@ res_lat_imp <- latent_separation(
   missing = "impute",
   impute_args = list(numeric_method = "mean", categorical_method = "missing", logical_method = "mode")
 )
-gt_latent_separation(res_lat_imp, title = "Latent Minimal Subsets — Imputed", subtitle = "Mean; Missing=level")
+tab_lat <- gt_latent_separation(res_lat_imp, title = "Latent Minimal Subsets — Imputed", subtitle = "Mean; Missing=level")
+gt::gtsave(tab_lat, "man/figures/readme-latent-gt.png")
 
 # 3. Impute via Mice
 res_lat_mice <- latent_separation(

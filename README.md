@@ -110,7 +110,13 @@ gt_uni_separation(res_uni_cc, title = "Univariate (X1 vs Y) — Complete-case")
 
 # All predictors vs outcome (one-shot summary)
 gt_uni_separation_all(df_miss, outcome = "Y", missing = "complete")
+```
 
+### Example output
+
+![Univariate DISCO table](man/figures/readme-uni-gt-all.png)
+
+```r
 # Latent minimal subsets (imputed)
 res_lat_imp <- latent_separation(
   y = df_miss$Y,
@@ -121,6 +127,8 @@ res_lat_imp <- latent_separation(
 )
 gt_latent_separation(res_lat_imp, title = "Latent Minimal Subsets — Imputed")
 ```
+![Univariate DISCO table](man/figures/readme-latent-gt.png)
+
 Tables colorize severity, display missing-data method & params, and list Rows Used.
 If all subjects are used, the full 1, 2, …, N is printed automatically.
 
