@@ -13,7 +13,9 @@ latent_separation(
   find_minimal = FALSE,
   mode = c("either", "perfect", "quasi"),
   max_vars = NULL,
-  stop_at_first = FALSE
+  stop_at_first = FALSE,
+  missing = c("complete", "impute"),
+  impute_args = list()
 )
 }
 \arguments{
@@ -34,10 +36,15 @@ latent_separation(
 \item{max_vars}{Optional upper bound on subset size (default: all the way to p).}
 
 \item{stop_at_first}{If TRUE and find_minimal=TRUE, stop after the first minimal hit.}
+
+\item{missing}{How to treat missing data: "complete" (drop rows w/ NA in the subset) or "impute" (impute predictors; never impute outcome).}
+
+\item{impute_args}{Optional list (see \code{uni_separation}).}
 }
 \value{
-If not searching: single result list {type, removed?, message}.
-If searching: list with $minimal_subsets (named by vars joined with "_").
+If not searching: single result list {type, removed?, message, missing_info}.
+If searching: list with $minimal_subsets (named by vars joined with "_"), each containing
+{type, vars, removed?, missing_info}.
 }
 \description{
 LP-based latent separation detection (with optional minimal-subset search)

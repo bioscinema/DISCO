@@ -4,7 +4,13 @@
 \alias{uni_separation}
 \title{Univariate Separation Detection}
 \usage{
-uni_separation(data, predictor, outcome = "Y")
+uni_separation(
+  data,
+  predictor,
+  outcome = "Y",
+  missing = c("complete", "impute"),
+  impute_args = list()
+)
 }
 \arguments{
 \item{data}{A data frame or tibble.}
@@ -12,19 +18,34 @@ uni_separation(data, predictor, outcome = "Y")
 \item{predictor}{Name of the predictor column (string).}
 
 \item{outcome}{Name of the binary outcome column (string, default "Y").}
+
+\item{missing}{How to handle missing data for the tested variables.
+One of \code{"complete"} (drop rows with NA in \code{predictor} or \code{outcome}) or
+\code{"impute"} (impute the predictor only; outcome NA is always dropped).}
+
+\item{impute_args}{Optional list of imputation settings when
+\code{missing = "impute"}. Recognized keys:
+\itemize{
+\item \code{numeric_method}: "median" (default) or "mean"
+\item \code{categorical_method}: "mode" (default) or "missing"
+\item \code{logical_method}: "mode" (default) or "missing"
+\item \code{custom_fn}: function(data.frame) -> imputed data.frame
+}}
 }
 \value{
 A list with fields:
 \itemize{
 \item \code{predictor}, \code{outcome}
-\item \code{separation_type} ("Perfect separation", "Quasi-complete separation",
-"No separation problem", "Constant outcome", "Constant predictor")
+\item \code{separation_type} ("Perfect separation",
+"Quasi-complete separation", "No separation problem",
+"Constant outcome", "Constant predictor")
 \item \code{separation_index} (Rand index)
-\item \code{severity_score} in \eqn{[0,1]}
+\item \code{severity_score} in \link{0,1}
 \item \code{rand_details} (list from \code{rand_index})
 \item \code{single_tie_boundary} (logical), \code{tie_rows_boundary} (integer)
 \item \code{boundary_threshold} (numeric)
-\item \code{overlap_prop} (numeric in \link{0,1}, optional)
+\item \code{missing_info}: list with \code{method}, \code{params},
+\code{rows_used} (indices in the original data), and \code{n_used}
 }
 }
 \description{
@@ -34,15 +55,14 @@ alignment, a vectorized Rand index, a non-negative boundary threshold,
 and a continuous severity score.
 }
 \details{
-The procedure:
+Procedure:
 \enumerate{
-\item Validates inputs; drops rows with missing \code{predictor} or \code{outcome}.
-\item Early exits if the outcome or predictor is constant.
-\item Optionally computes group overlap via kernel density (\pkg{overlapping}).
-\item Builds an initial 2-cluster assignment by sorting \code{predictor},
-aligns with \code{outcome} using Hungarian matching
-(\code{clue::solve_LSAP}).
-\item Computes Rand index and detects boundary single-ties.
-\item Applies a non-negative threshold and computes a severity score.
+\item Validate inputs and slice only the needed columns.
+\item Handle missing data per user choice (never impute the outcome).
+\item Early exit if the outcome or predictor is constant after handling.
+\item Build an initial 2-cluster assignment by sorting the predictor,
+align with the outcome via Hungarian matching (\code{clue::solve_LSAP}).
+\item Compute the Rand index and detect single-tie boundaries.
+\item Apply a non-negative boundary threshold and compute a severity score.
 }
 }
