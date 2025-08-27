@@ -1,5 +1,5 @@
-# DiSCoB
-Diagnosis &amp; Separation Correction (Bayesian)
+# DISCO
+**DI**agnosis of **S**eparation and **C**orrection of **O**dds-ratio inflation in logistic regression
 
 ## Overview
 **DiSCoB** provides tools to:
