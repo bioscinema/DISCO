@@ -13,8 +13,8 @@
 Install the development version directly from GitHub:
 ```r
 # install.packages("devtools")
-devtools::install_github("bioscinema/DiSCoB")
-library(DiSCoB)
+devtools::install_github("bioscinema/DISCO")
+library(DISCO)
 ```
 
 ## Separation Diagnosis Examples
