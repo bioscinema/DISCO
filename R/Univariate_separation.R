@@ -66,6 +66,9 @@ uni_separation <- function(data, predictor, outcome = "Y") {
   y <- data[[outcome]]
   x <- data[[predictor]]
 
+  y <- encode_outcome(y)
+  x <- encode_predictors(x)
+
   # Early exits
   if (length(unique(y)) == 1L) {
     return(list(

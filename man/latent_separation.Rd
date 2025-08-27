@@ -13,9 +13,9 @@ latent_separation(
 )
 }
 \arguments{
-\item{y}{Numeric vector of binary outcomes (0/1).}
+\item{y}{Vector of binary outcomes (0/1).}
 
-\item{X}{Numeric matrix or data frame of predictors (columns = variables).}
+\item{X}{Matrix or data frame of predictors (columns = variables).}
 
 \item{test_combinations}{Logical; if TRUE, tests every subset of variables of size ≥ \code{min_vars}.}
 

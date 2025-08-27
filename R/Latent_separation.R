@@ -2,8 +2,8 @@
 #'
 #' Check for perfect or quasi-complete separation in multivariate predictors.
 #'
-#' @param y Numeric vector of binary outcomes (0/1).
-#' @param X Numeric matrix or data frame of predictors (columns = variables).
+#' @param y Vector of binary outcomes (0/1).
+#' @param X Matrix or data frame of predictors (columns = variables).
 #' @param test_combinations Logical; if TRUE, tests every subset of variables of size ≥ \code{min_vars}.
 #' @param min_vars Integer; minimum number of variables in subsets when \code{test_combinations=TRUE}.
 #' @return For single X: a list with \code{type} ("perfect separation", "quasi-complete separation", or "no separation problem"), and optionally \code{removed} and \code{message}. For combinations: named list of results per subset.
@@ -11,6 +11,9 @@
 #' @export
 latent_separation <- function(y, X, test_combinations = FALSE, min_vars = 2, only_perfect = FALSE) {
   var_names <- colnames(X)
+
+  y <- encode_outcome(y)
+  X <- encode_predictors(X)
 
   if (test_combinations) {
     p <- ncol(X); results <- list()
