@@ -10,7 +10,14 @@
 #' @param max_vars Optional upper bound on subset size (default: all the way to p).
 #' @param stop_at_first If TRUE and find_minimal=TRUE, stop after the first minimal hit.
 #' @param missing How to treat missing data: "complete" (drop rows w/ NA in the subset) or "impute" (impute predictors; never impute outcome).
-#' @param impute_args Optional list (see \code{uni_separation}).
+#' @param impute_args Optional list of imputation settings when
+#'   `missing = "impute"`. Recognized keys:
+#'   \itemize{
+#'     \item \code{numeric_method}: "median" (default) or "mean"
+#'     \item \code{categorical_method}: "mode" (default) or "missing"
+#'     \item \code{logical_method}: "mode" (default) or "missing"
+#'     \item \code{custom_fn}: function(data.frame) -> imputed data.frame
+#'   }
 #' @return If not searching: single result list {type, removed?, message, missing_info}.
 #'         If searching: list with $minimal_subsets (named by vars joined with "_"), each containing
 #'         {type, vars, removed?, missing_info}.

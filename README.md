@@ -66,9 +66,31 @@ latent_separation(y, X)$type  # "perfect separation" (for this example)
 - Every result returns `missing_info` with:
   - `method` (`"complete"` or `"impute"`)
   - `params` (imputation settings or `custom_fn`)
-  - `n_used` (number of rows analyzed)
-  - `rows_used` (exact original row indices)
+  - `n_used` (number of rows analyzed after the missing-data rule)
+  - `rows_used` (exact **original** row indices included in the fit)
 - In latent (subset) searches, **each subset** has its own `missing_info` (its own `rows_used`/`n_used`) since missingness can differ by variable combination.
+
+#### Imputation Params (`missing_info$params`)
+A compact summary of per-type rules when `method = "impute"` (e.g., `Numeric=Mean; Categorical=Missing; Logical=Mode`):
+
+- **Numeric** (`numeric_method`)
+  - `Mean` — replace `NA` with the column mean  
+  - `Median` — replace `NA` with the column median  
+  - `Constant=<c>` — replace `NA` with a supplied constant (e.g., `Constant=0`)  
+  - `Custom Imputer` — a user-provided function was used
+
+- **Categorical** (`categorical_method`)
+  - `Missing` — turn `NA` into an explicit `"Missing"` level (adds a level if needed)  
+  - `Mode` — replace `NA` with the most frequent level  
+  - `Constant=<level>` — replace `NA` with a supplied level  
+  - `Custom Imputer` — a user-provided function was used
+
+- **Logical** (`logical_method`)
+  - `Mode` — replace `NA` with the most frequent value (`TRUE`/`FALSE`)  
+  - `Constant=TRUE/FALSE` — replace `NA` with the given logical  
+  - `Custom Imputer` — a user-provided function was used
+
+**Mode definition.** *Mode* is the value/level occurring **most often** among non-missing entries. If there’s a tie, it is broken **deterministically** (e.g., first level / first in `table()` order).
 
 Example with missing values:
 

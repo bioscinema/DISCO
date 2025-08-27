@@ -39,7 +39,14 @@ latent_separation(
 
 \item{missing}{How to treat missing data: "complete" (drop rows w/ NA in the subset) or "impute" (impute predictors; never impute outcome).}
 
-\item{impute_args}{Optional list (see \code{uni_separation}).}
+\item{impute_args}{Optional list of imputation settings when
+\code{missing = "impute"}. Recognized keys:
+\itemize{
+\item \code{numeric_method}: "median" (default) or "mean"
+\item \code{categorical_method}: "mode" (default) or "missing"
+\item \code{logical_method}: "mode" (default) or "missing"
+\item \code{custom_fn}: function(data.frame) -> imputed data.frame
+}}
 }
 \value{
 If not searching: single result list {type, removed?, message, missing_info}.
