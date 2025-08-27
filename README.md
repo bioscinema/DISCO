@@ -116,6 +116,42 @@ gt_uni_separation_all(df_miss, outcome = "Y", missing = "complete")
 
 ![Univariate DISCO table](man/figures/readme-uni-gt-all.png)
 
+This table summarize univariate screen results of each predictor against the outcome (`Y`) using **complete-case** data. It flags whether any single predictor causes separation in a logistic model.
+
+- **Predictor / Outcome**  
+  The variable tested and the binary outcome.
+
+- **Indices (block of columns)**
+  - **Separation Index** — scaled 0–1; **1.000 = Perfect Separation**, values near 0 indicate no separation concern.
+  - **Severity** — scaled 0–1 and shown with color; higher = more severe (red), lower = minimal/none (green).
+  - **Boundary Threshold** — the univariate cut that separates classes at the boundary (reported for reference).
+  - **Single-Tie Boundary** — **Yes** if separation hinges on a single boundary case; **No** otherwise.
+  - **Tie Count** — number of tied boundary rows involved in the separating cut.
+
+- **Missing-Data Handling (block of columns)**
+  - **Missing Method** — *Complete* = complete-case analysis.
+  - **Imputation Params** — parameters shown when imputation is used (here they’re placeholders because complete-case was used).
+  - **N Used** — number of subjects actually analyzed after the missing-data rule.
+
+- **Separation**  
+  Text label summarizing the result:
+  - **Perfect Separation** — predictor alone perfectly separates the outcome (MLE will diverge).
+  - **No Problem** — no separation detected.
+
+- **Rows Used (Original Indices)**  
+  Original dataset row numbers included in the analysis for that predictor (not re-indexed after filtering).
+
+---
+
+- **X1** has **Separation Index = 1.000**, **Severity = 1.000**, and is labeled **Perfect Separation** with **N Used = 9**.  
+  → X1 alone perfectly separates `Y` on the complete-case subset (rows `1, 2, 4, 5, 6, 7, 9, 10, 12`). Standard logistic regression MLE will not be finite; consider remedies (e.g., Firth penalization, Bayesian priors, or data/model modifications).
+
+- **Race, L1, X2** show **Separation Index ≈ 0.57–0.61**, **Severity = 0.000**, and **No Problem**.  
+  → These predictors do **not** induce separation in univariate fits on their respective complete-case samples (N Used = 8–9).
+
+- All rows used are reported as **original indices**. Since the method is *Complete*, the full list is shown for each predictor.
+
+
 ```r
 # Latent: minimal subsets, complete-case per subset
 res_lat_cc <- latent_separation(
@@ -126,6 +162,40 @@ res_lat_cc <- latent_separation(
 )
 ```
 ![Univariate DISCO table](man/figures/readme-latent-gt-complete.png)
+
+This table summarizes subsets of predictors that yield separation in a **complete-case analysis** (rows with any missing values are excluded). Each row corresponds to one predictor subset.
+
+- **Subset / Variables / # Of Predictors**  
+  The predictor combination evaluated and its size.
+
+- **Missing-Data Handling / Imputation Params / N Used**  
+  The approach to missing data (*Complete* means complete-case) and how many subjects were analyzed for that subset. Imputation parameters are shown when applicable.
+
+- **Separation**  
+  The separation status observed with the listed subjects as used:
+  - **Perfect Separation** — the subset already perfectly separates the outcome.
+  - **Quasi-Complete Separation** — separation is nearly perfect (one side has boundary cases).
+
+- **Removed And Rest Reach Perfect**  
+  A **minimal** set of original row indices that, if dropped, would make the **remaining used** rows achieve **Perfect Separation**.
+  - Empty/blank here means no removal is needed (the subset already has Perfect Separation).
+  - When multiple indices appear, **all** must be removed; removing a strict subset may not suffice.
+
+- **Rows Used (Original Indices)**  
+  The original dataset row numbers included in the complete-case fit for that subset. We always report **original indices** (not re-indexed after filtering).
+  
+---
+
+- **X1_X2, X2_L1, Race_L1, X1_Race, X2_Race**  
+  - **Separation:** Perfect Separation  
+  - **Removed And Rest Reach Perfect:** *(blank)* → already Perfect; no rows need removal.  
+  - **N Used:** 6–7, with original indices listed in the last column.
+
+- **X1_L1**  
+  - **Separation:** Quasi-Complete Separation  
+  - **Removed And Rest Reach Perfect:** `5`  
+  - **Interpretation:** The complete-case fit used rows `1, 4, 5, 7, 9, 10`. If you drop row **5**, the remaining rows (`1, 4, 7, 9, 10`) would yield **Perfect Separation** for subset `{X1, L1}`.
+
 
 ```r
 # Latent minimal subsets (imputed)
@@ -140,8 +210,37 @@ gt_latent_separation(res_lat_imp, title = "Latent Minimal Subsets — Imputed")
 ```
 ![Univariate DISCO table](man/figures/readme-latent-gt.png)
 
-Tables colorize severity, display missing-data method & params, and list Rows Used.
-If all subjects are used, the full 1, 2, …, N is printed automatically.
+This table summarizes subsets of predictors that yield separation in a **impuataion analysis**. Each row corresponds to one predictor subset.
+
+- **Subset / Variables / # Of Predictors**  
+  The subset name, which variables it includes, and its size.
+
+- **Missing-Data Handling / Imputation Params / N Used**  
+  - **Missing Method** — *Impute* indicates missing values in predictors were filled according to the listed recipe.  
+  - **Imputation Params** — e.g., `Numeric=Mean; Categorical=Missing; Logical=Mode` means numeric features use mean imputation, categorical features add a literal “Missing” level, and logicals use the mode.  
+  - **N Used** — number of subjects used after applying the imputation rule (can be less than total if the **outcome** is missing for some rows, since outcomes are not imputed).
+
+- **Separation**  
+  The separation status **after imputation** using the rows counted in *N Used*:
+  - **Perfect Separation** — the subset perfectly separates the outcome on the imputed dataset.
+  - **Quasi-Complete Separation** — nearly perfect; boundary cases exist (not shown in this example).
+
+- **Removed And Rest Reach Perfect**  
+  A **minimal** set of original row indices that, *if removed*, would make the **remaining used** rows achieve **Perfect Separation**.  
+  - Blank = already Perfect; no removal needed.  
+  - If multiple indices appear, **all** are required (removing a strict subset may not suffice).
+
+- **Rows Used (Original Indices)**  
+  Original dataset row numbers included in the imputed fit for that subset.  
+  - In **imputed** mode this is hidden by default (shown as “—”) to avoid long lists.  
+  - Set `show_rows_used = TRUE` to preview indices. Indices are always reported in the **original** numbering (not re-indexed after filtering/imputation).
+
+---
+
+- All listed pairs (e.g., **X1_X2**, **X1_Race**, **X2_Race**, **Race_L1**) achieve **Perfect Separation** under the specified imputation scheme with **N Used = 11**.
+- **Removed And Rest Reach Perfect** is blank for each row → no removals are needed because separation is already perfect.
+- **Practical note:** Separation that appears **after imputation** can reflect either genuine structure or an artifact of the imputation rule (e.g., adding a “Missing” level). Consider sensitivity checks (complete-case vs. imputed analyses), penalized likelihood (Firth), or Bayesian priors when fitting logistic models in the presence of separation.
+
 
 ### API cheatsheet
 ```r
@@ -178,7 +277,7 @@ gt_uni_separation_all(
   impute_args = list(...),
   include_constant = FALSE, only_hits = FALSE
 )
-```r
+```
 
 ### Notes & assumptions
 - Outcome is binary and will be normalized to '{0,1}' (supports logical or 2-level factor/character).
