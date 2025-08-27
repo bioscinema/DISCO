@@ -50,75 +50,89 @@
 #' @importFrom clue solve_LSAP
 #' @export
 uni_separation <- function(data, predictor, outcome = "Y") {
-  if (!predictor %in% names(data)) {
-    stop(sprintf("Predictor column '%s' not found.", predictor), call. = FALSE)
+  if (!predictor %in% names(data)) stop(sprintf("Predictor column '%s' not found.", predictor), call. = FALSE)
+  if (!outcome %in% names(data))   stop(sprintf("Outcome column '%s' not found.", outcome),   call. = FALSE)
+
+  # drop missing
+  data <- dplyr::filter(data, !is.na(.data[[predictor]]), !is.na(.data[[outcome]]))
+
+  # normalize outcome to 0/1 (integer)
+  y <- encode_outcome(data[[outcome]])
+
+  # --- Get a numeric x for the univariate path ---
+  x_raw <- data[[predictor]]
+  if (is.numeric(x_raw)) {
+    x <- x_raw
+  } else {
+    ux <- unique(x_raw)
+    k  <- length(ux)
+    if (is.logical(x_raw) || k == 2L) {
+      # binary -> 0/1 vector
+      x <- as.integer(factor(x_raw, levels = sort(ux))) - 1L
+    } else {
+      # multi-level categorical: hand off to LP on dummies and return a summary
+      Xdum <- encode_predictors(data[predictor, drop = FALSE])
+      lp_res <- latent_separation(y = y, X = Xdum, test_combinations = FALSE)
+      return(list(
+        predictor           = predictor,
+        outcome             = outcome,
+        separation_type     = switch(lp_res$type,
+                                     "perfect separation" = "Perfect separation",
+                                     "quasi-complete separation" = "Quasi-complete separation",
+                                     "no separation problem" = "No separation problem",
+                                     lp_res$type),
+        separation_index    = NA_real_,
+        severity_score      = NA_real_,
+        rand_details        = NULL,
+        single_tie_boundary = FALSE,
+        tie_rows_boundary   = 0L,
+        boundary_threshold  = NA_real_,
+        overlap_prop        = NA_real_,
+        note                = "Categorical predictor auto-encoded to dummies for LP-based check."
+      ))
+    }
   }
-  if (!outcome %in% names(data)) {
-    stop(sprintf("Outcome column '%s' not found.", outcome), call. = FALSE)
-  }
-
-  data <- dplyr::filter(
-    data,
-    !is.na(.data[[predictor]]),
-    !is.na(.data[[outcome]])
-  )
-
-  y <- data[[outcome]]
-  x <- data[[predictor]]
-
-  y <- encode_outcome(y)
-  x <- encode_predictors(x)
 
   # Early exits
   if (length(unique(y)) == 1L) {
-    return(list(
-      predictor       = predictor,
-      outcome         = outcome,
-      separation_type = "Constant outcome",
-      message         = sprintf("All outcomes %s = %s", outcome, unique(y))
-    ))
+    return(list(predictor=predictor, outcome=outcome, separation_type="Constant outcome",
+                message=sprintf("All outcomes %s = %s", outcome, unique(y))))
   }
   if (length(unique(x)) == 1L) {
-    return(list(
-      predictor       = predictor,
-      outcome         = outcome,
-      separation_type = "Constant predictor",
-      message         = sprintf("All %s = %s", predictor, unique(x))
+    return(list(predictor=predictor, outcome=outcome, separation_type="Constant predictor",
+                message=sprintf("All %s = %s", predictor, unique(x))))
+  }
+
+  # --- Use encoded y to split groups (fixes your bug) ---
+  idx0 <- which(y == 0L)
+  idx1 <- which(y == 1L)
+
+  # Optional: compute overlap safely
+  overlap_prop <- NA_real_
+  if (length(idx0) >= 2L && length(idx1) >= 2L) {
+    overlap_prop <- as.numeric(round(
+      overlapping::overlap(list(x1 = x[idx0], x2 = x[idx1]), type = "2", kernel = "gaussian")$OV, 5
     ))
   }
 
-  # Overlap proportion (optional diagnostic)
-  group0 <- dplyr::filter(data, .data[[outcome]] == 0)
-  group1 <- dplyr::filter(data, .data[[outcome]] == 1)
-  overlap_prop <- as.numeric(round(
-    overlapping::overlap(
-      list(x1 = group0[[predictor]], x2 = group1[[predictor]]),
-      type   = "2",
-      kernel = "gaussian"
-    )$OV, 5
-  ))
-
-  # Sort by predictor and make initial 2 clusters by outcome balance
+  # Sort by predictor and build initial clusters
   ord_idx <- order(x)
-  y_ord <- y[ord_idx]
-  x_ord <- x[ord_idx]
-  n <- length(y_ord)
-  n0 <- sum(y_ord == 0)
+  y_ord   <- y[ord_idx]
+  x_ord   <- x[ord_idx]
+  n       <- length(y_ord)
+  n0      <- sum(y_ord == 0L)
   initial_clusters <- c(rep(1L, n0), rep(2L, n - n0))
 
-  cm <- table(
-    factor(y_ord, levels = 0:1),
-    factor(initial_clusters, levels = 1:2)
-  )
+  cm <- table(factor(y_ord, levels = 0:1), factor(initial_clusters, levels = 1:2))
   cost_mat <- max(cm) - cm
-  opt_map <- clue::solve_LSAP(cost_mat)
-  preds <- as.vector(opt_map[initial_clusters] - 1L)
+  opt_map  <- clue::solve_LSAP(cost_mat)
+  preds    <- as.vector(opt_map[initial_clusters] - 1L)
 
-  ri <- rand_index(y_ord, preds)
+  ri      <- rand_index(y_ord, preds)
   sep_idx <- ri$rand_index
 
-  X0 <- sort(unique(group0[[predictor]]))
-  X1 <- sort(unique(group1[[predictor]]))
+  X0 <- sort(unique(x[idx0]))
+  X1 <- sort(unique(x[idx1]))
   shared <- intersect(X0, X1)
 
   single_tie <- length(shared) == 1L && (
@@ -127,7 +141,7 @@ uni_separation <- function(data, predictor, outcome = "Y") {
   )
   tie_count <- if (isTRUE(single_tie)) sum(x == shared) else 0L
 
-  raw_thresh <- 1 - (2 * tie_count / n)
+  raw_thresh      <- 1 - (2 * tie_count / n)
   boundary_thresh <- max(raw_thresh, 0)
 
   is_perfect <- isTRUE(!is.na(sep_idx)) && identical(sep_idx, 1) && !single_tie
@@ -139,13 +153,7 @@ uni_separation <- function(data, predictor, outcome = "Y") {
     "No separation problem"
   }
 
-  sev_score <- severity_scale(
-    sep_idx = sep_idx,
-    threshold = boundary_thresh,
-    tie_count = tie_count,
-    n = n,
-    is_perfect = is_perfect
-  )
+  sev_score <- severity_scale(sep_idx, boundary_thresh, tie_count, n, is_perfect)
 
   list(
     predictor           = predictor,
