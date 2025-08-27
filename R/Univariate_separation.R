@@ -63,8 +63,8 @@ uni_separation <- function(data, predictor, outcome = "Y") {
     !is.na(.data[[outcome]])
   )
 
-  y <- data[[outcome]]
-  x <- data[[predictor]]
+  y <- encode_outcome(data[[outcome]])
+  x <- encode_predictors(data[[predictor]])
 
   # Early exits
   if (length(unique(y)) == 1L) {
