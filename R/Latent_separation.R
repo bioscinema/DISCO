@@ -10,9 +10,6 @@
 #' @importFrom lpSolve lp
 #' @export
 latent_separation <- function(y, X, test_combinations = FALSE, min_vars = 2, only_perfect = FALSE) {
-  y <- encode_outcome(y)
-  X <- encode_predictors(X)
-
   var_names <- colnames(X)
 
   if (test_combinations) {

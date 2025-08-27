@@ -1,6 +1,6 @@
-Package: DiSCoB
+Package: DISCO
 Type: Package
-Title: Diagnosis & Separation Correction (Bayesian)
+Title: DIagnosis of Separation and Correction of Odds-ratio inflation in logistic regression
 Version: 0.1.0
 Authors@R:
     person("Chenyu", "Liu", email = "cxl1299@case.edu", role = c("aut", "cre"))
