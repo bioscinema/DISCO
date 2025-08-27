@@ -2,7 +2,7 @@
 **DI**agnosis of **S**eparation and **C**orrection of **O**dds-ratio inflation in logistic regression
 
 ## Overview
-**DiSCoB** provides tools to:
+**DISCO** provides tools to:
 ### Separation Diagnosis
 - `uni_separation()` — univariate detector using Hungarian matching + a **vectorized Rand index**, **non-negative boundary threshold**, and a **continuous severity score** in [0,1].
 - `latent_separation()` — multivariate, **LP-based** feasibility checks for **perfect** or **quasi-complete** separation; can optionally test **all variable subsets**.
