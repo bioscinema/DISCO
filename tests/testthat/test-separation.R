@@ -446,19 +446,19 @@ res_lat_imp <- latent_separation(
 tab_lat <- gt_latent_separation(res_lat_imp, title = "Latent Minimal Subsets — Imputed", subtitle = "Mean; Missing=level")
 gt::gtsave(tab_lat, "man/figures/readme-latent-gt.png")
 
-# 3. Impute via Mice
-res_lat_mice <- latent_separation(
-  y = df$Y,
-  X = df[, c("X1","X2","Race","L1")],
-  find_minimal = TRUE,
-  mode = "either",
-  missing = "impute",
-  impute_args = list(
-    backend = "mice",
-    backend_args = list(m = 1, maxit = 5, printFlag = FALSE, seed = 2025)
-  )
-)
-gt_latent_separation(res_lat_mice, title = "Latent Minimal Subsets — Imputed (Mice or fallback)")
-
-
+# # 3. Impute via Mice
+# res_lat_mice <- latent_separation(
+#   y = df$Y,
+#   X = df[, c("X1","X2","Race","L1")],
+#   find_minimal = TRUE,
+#   mode = "either",
+#   missing = "impute",
+#   impute_args = list(
+#     backend = "mice",
+#     backend_args = list(m = 1, maxit = 5, printFlag = FALSE, seed = 2025)
+#   )
+# )
+# gt_latent_separation(res_lat_mice, title = "Latent Minimal Subsets — Imputed (Mice or fallback)")
+#
+#
 
