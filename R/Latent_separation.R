@@ -170,3 +170,44 @@ latent_separation <- function(
 
   list(minimal_subsets = minimal)
 }
+
+
+# -------------------------------------------------------------------
+# LP‐based perfect‐separation feasibility check
+# -------------------------------------------------------------------
+feasibility_check_LP <- function(y, X) {
+  p <- ncol(X)
+  n <- nrow(X)
+  epsilon <- 1e-5
+
+  # Objective: zeros for alpha + 2*p slack vars
+  f.obj <- rep(0, 2 * p + 1)
+
+  # Build constraint matrix A
+  A <- matrix(0, nrow = n + 1, ncol = 2 * p + 1)
+  A[1:n, 1] <- 1
+  for (i in seq_len(n)) {
+    A[i, 2:(p+1)]     <- X[i, ]
+    A[i, (p+2):(2*p+1)] <- -X[i, ]
+  }
+  # last constraint: sum(S1_i - S2_i)
+  A[n+1, 2:(p+1)]     <- 1
+  A[n+1, (p+2):(2*p+1)] <- -1
+
+  # directions and RHS
+  dir <- ifelse(y == 1, ">=", "<=")
+  dir <- c(dir, ">=")
+  rhs <- c(rep(0, n), epsilon)
+
+  # LP1: sum(S1 - S2) ≥ ε
+  lp1 <- lpSolve::lp("min", f.obj, A, dir, rhs)
+  res_ge <- list(status = lp1$status, sol = lp1$solution)
+
+  # LP2: sum(S1 - S2) ≤ -ε
+  dir[n+1] <- "<="
+  rhs[n+1] <- -epsilon
+  lp2 <- lpSolve::lp("min", f.obj, A, dir, rhs)
+  res_le <- list(status = lp2$status, sol = lp2$solution)
+
+  list(ge = res_ge, le = res_le)
+}

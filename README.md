@@ -182,8 +182,9 @@ res_lat_cc <- latent_separation(
   find_minimal = TRUE,
   missing = "complete"
 )
+gt_latent_separation(res_lat_cc, title = "Latent Minimal Subsets — Complate-Case")
 ```
-![Univariate DISCO table](man/figures/readme-latent-gt-complete.png)
+![Latent DISCO table](man/figures/readme-latent-gt-complete.png)
 
 This table summarizes subsets of predictors that yield separation in a **complete-case analysis** (rows with any missing values are excluded). Each row corresponds to one predictor subset.
 
@@ -230,7 +231,7 @@ res_lat_imp <- latent_separation(
 )
 gt_latent_separation(res_lat_imp, title = "Latent Minimal Subsets — Imputed")
 ```
-![Univariate DISCO table](man/figures/readme-latent-gt.png)
+![Latent DISCO table](man/figures/readme-latent-gt.png)
 
 This table summarizes subsets of predictors that yield separation in a **impuataion analysis**. Each row corresponds to one predictor subset.
 

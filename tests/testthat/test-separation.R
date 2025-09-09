@@ -1,5 +1,5 @@
 library(testthat)
-library(DiSCoB)
+library(DISCO)
 
 # -------------------------------------------------------------------
 # Test on uni-separation
