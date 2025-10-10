@@ -9,6 +9,7 @@ latent_separation(
   X,
   test_combinations = FALSE,
   min_vars = 2,
+  epsilon = 1e-05,
   only_perfect = FALSE,
   find_minimal = FALSE,
   mode = c("either", "perfect", "quasi"),
@@ -26,6 +27,8 @@ latent_separation(
 \item{test_combinations}{If TRUE, test every subset of size ≥ min_vars (legacy exhaustive mode).}
 
 \item{min_vars}{Minimum subset size to consider.}
+
+\item{epsilon}{Numeric scalar > 0. Margin used in LP feasibility check (default 1e-5). Larger values make the test stricter; smaller values approach the limiting definition.}
 
 \item{only_perfect}{Legacy flag for exhaustive mode (kept for compatibility).}
 

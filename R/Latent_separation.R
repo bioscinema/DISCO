@@ -4,6 +4,7 @@
 #' @param X Matrix or data frame of predictors (columns = variables).
 #' @param test_combinations If TRUE, test every subset of size ≥ min_vars (legacy exhaustive mode).
 #' @param min_vars Minimum subset size to consider.
+#' @param epsilon Numeric scalar > 0. Margin used in LP feasibility check (default 1e-5). Larger values make the test stricter; smaller values approach the limiting definition.
 #' @param only_perfect Legacy flag for exhaustive mode (kept for compatibility).
 #' @param find_minimal If TRUE, return inclusion-minimal separating subsets using pruning.
 #' @param mode "either", "perfect", or "quasi" – what to count as a hit.
@@ -26,6 +27,7 @@ latent_separation <- function(
     y, X,
     test_combinations = FALSE,
     min_vars = 2,
+    epsilon = 1e-5,
     only_perfect = FALSE,
     find_minimal = FALSE,
     mode = c("either","perfect","quasi"),
@@ -175,10 +177,9 @@ latent_separation <- function(
 # -------------------------------------------------------------------
 # LP‐based perfect‐separation feasibility check
 # -------------------------------------------------------------------
-feasibility_check_LP <- function(y, X) {
+feasibility_check_LP <- function(y, X, epsilon = 1e-5) {
   p <- ncol(X)
   n <- nrow(X)
-  epsilon <- 1e-5
 
   # Objective: zeros for alpha + 2*p slack vars
   f.obj <- rep(0, 2 * p + 1)
