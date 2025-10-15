@@ -23,8 +23,16 @@ When predictors **perfectly** (or almost perfectly) split the outcome, logistic 
   - choose **perfect**, **quasi**, or **either** as “hit” criteria,
   - handle missingness **per subset** (complete-case or imputation).
 
-### Estimation Correction
-Planned: odds-ratio deflation after separation detection. *(Coming soon.)*
+### Estimation (Bayesian)
+- `MEP_latent()` — logistic regression with a **Multivariate Exponential Power (MEP)** prior, fit via MH. Returns posterior draws, working-space summaries, and credible intervals for back-transformed effects on:
+  - **Scaled** (working/logit space),
+  - **A** (per-SD of original X on log-odds),
+  - **SAS** (= A × π/√3),
+  - **Long** (= A × (π/√3 + 1)).
+- `mep_grid_search()` — try a grid over provided \((\mu,\Sigma,\kappa)\), select a run using acceptance-rate & a GLM coefficient-ratio reference, and carry through CIs.
+
+
+Planned: odds-ratio deflation after separation detection. *(uni-sep and mixture situation coming soon.)*
 
 ---
 
@@ -286,10 +294,80 @@ This table summarizes subsets of predictors that yield separation in a **impuata
   - **Practical note:** Separation that appears **after imputation** can reflect either genuine structure or an artifact of the imputation rule (e.g., adding a “Missing” level). Consider sensitivity checks (complete-case vs. imputed analyses), penalized likelihood (Firth), or Bayesian priors when fitting logistic models in the presence of separation.
 
 ---
+---
 
+## Bayesian Estimation with MEP (posterior means & credible intervals)
+
+**When to use:** After your screen flags separation risk, fit a logistic model with an MEP prior to stabilize estimation.  
+Defaults: `MEP_latent(..., scale_X = TRUE)`; `mep_grid_search(..., scale_X = TRUE)`. (By contrast, `latent_separation` defaults to `scale_X = FALSE`.)
+
+### Quick start
+
+```r
+set.seed(1)
+y <- c(0,0,0,0,1,1,1,1)
+X <- cbind(
+  X1 = c(-1.86, -0.81,  1.32, -0.40,  0.91,  2.49,  0.34,  0.25),
+  X2 = c( 0.52,  1.07,  0.60,  0.67, -1.39,  0.16, -1.40, -0.09)
+)
+
+p <- ncol(X) + 1
+fit <- MEP_latent(
+  n_iter = 10000, burn_in = 1000,
+  init_beta = rep(0.01, p), step_size = 0.4,
+  X_orig = X, y = y, mu = rep(0, p), Sigma = diag(p), kappa = 1,
+  scale_X = TRUE, ci_level = 0.95
+)
+
+# Working-space summary (includes Intercept)
+head(fit$scaled_summary)
+
+# Back-transformed effects with 95% CIs (per predictor; no intercept):
+# Scaled (working/logit), A, SAS, Long
+head(fit$standardized_coefs_back)
+```
+
+**Returned components (high level):**
+- `posterior_chain` — draws after burn-in.
+- `scaled_summary` — mean/SD/CI for Intercept and predictors **in working/logit space**.
+- `standardized_coefs_back` — per-predictor means and CIs on:
+  - **Scaled** (working/logit space),
+  - **A** (per-SD of original X on log-odds),
+  - **SAS** (= A × π/√3),
+  - **Long** (= A × (π/√3 + 1)).
+- `acceptance_rate`, `prop_matched` (simple posterior predictive diagnostic),
+- `scaling_info` (if `scale_X = TRUE`), and `ci_level`.
+
+> Note: The output does **not** include “M”-scale columns; only Scaled / A / SAS / Long are reported.
+
+### Prior grid search helper
+
+```r
+gs <- mep_grid_search(
+  y, X,
+  n_iter = 10000, burn_in = 1000, step_size = 0.4,
+  mu_vals = seq(-1, 1, by = 0.1),
+  Sigma_list = list(diag(ncol(X)+1), diag(ncol(X)+1)*0.1, diag(ncol(X)+1)*0.5,
+                    diag(ncol(X)+1)*2,  diag(ncol(X)+1)*5),
+  kappa_vals = c(0.5, 1, 2),
+  accept_window = c(0.3, 0.4),
+  accept_target = 0.35,
+  scale_X = TRUE, ci_level = 0.95
+)
+
+gs$best_settings        # chosen (mu, Sigma, kappa)
+head(gs$scaled_summary) # working/logit space with CIs
+head(gs$standardized_coefs_back) # A / SAS / Long with CIs
+```
+
+**Selection logic (summary):**
+1. Filter runs by MH acceptance in `accept_window` (fallback to closest to `accept_target`).
+2. Prefer higher `prop_matched` if < 0.90 is observed; else minimize mean absolute diff to a GLM coefficient-ratio reference (on the same scaling).
+
+---
 ### API cheatsheet
 ```r
-# Univariate
+# Univariate Detection
 uni_separation(
   data, predictor, outcome = "Y",
   missing = c("complete","impute"),
@@ -301,7 +379,7 @@ uni_separation(
   )
 )
 
-# Latent (multivariate)
+# Latent (multivariate) Detection
 latent_separation(
   y, X,
   find_minimal = FALSE,
@@ -310,7 +388,8 @@ latent_separation(
   mode = c("either","perfect","quasi"),
   stop_at_first = FALSE,
   missing = c("complete","impute"),
-  impute_args = list(...)
+  impute_args = list(...),
+  scale_X = FALSE     # set TRUE to z-score encoded predictors
 )
 
 # Tables (optional)
@@ -322,6 +401,26 @@ gt_uni_separation_all(
   impute_args = list(...),
   include_constant = FALSE, only_hits = FALSE
 )
+
+# Bayesian MEP logistic (estimation with CIs)
+MEP_latent(
+  n_iter, init_beta, step_size,
+  X_orig, y, mu, Sigma, kappa,
+  burn_in = 1000,
+  scale_X = TRUE,        # default TRUE
+  ci_level = 0.95
+)
+
+mep_grid_search(
+  y, X,
+  n_iter = 10000, burn_in = 1000, init_beta = NULL, step_size = 0.4,
+  mu_vals = seq(-1, 1, by = 0.1),
+  Sigma_list = list(...), kappa_vals = c(0.5, 1, 2),
+  accept_window = c(0.3, 0.4), accept_target = 0.35,
+  scale_X = TRUE,        # default TRUE
+  ci_level = 0.95
+)
+
 ```
 
 ### Notes & assumptions

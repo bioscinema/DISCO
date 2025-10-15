@@ -53,7 +53,7 @@
 #'   \item \strong{A}: per–SD-on-\code{X_orig} effect on the log-odds scale.
 #'   \item \strong{SAS}: \code{A} multiplied by \eqn{\pi/\sqrt{3}}.
 #'   \item \strong{Long}: \code{A} multiplied by \eqn{\pi/\sqrt{3} + 1}.
-#'   \item \strong{M}: \code{A} rescaled by sample-specific \eqn{R} and \eqn{\mathrm{sd}(X\beta)}.}
+#'   }
 #'
 #' @seealso \code{\link{mep_grid_search}}, \code{\link{latent_separation}}, \code{\link{uni_separation}}
 #' @importFrom stats quantile rbinom glm binomial coef sd plogis logLik
@@ -66,7 +66,7 @@
 #'   X2 = c( 0.52,  1.07,  0.60,  0.67, -1.39,  0.16, -1.40, -0.09)
 #' )
 #' p <- ncol(X) + 1
-#' fit <- run_MH_sampler(
+#' fit <- MEP_latent(
 #'   n_iter = 10000, burn_in = 1000, init_beta = rep(0.01, p), step_size = 0.4,
 #'   X_orig = X, y = y, mu = rep(0, p), Sigma = diag(p), kappa = 1,
 #'   scale_X = TRUE, ci_level = 0.95
@@ -75,7 +75,7 @@
 #' head(fit$standardized_coefs_back)
 #' }
 #' @export
-run_MH_sampler <- function(
+MEP_latent <- function(
     n_iter, init_beta, step_size, X_orig, y, mu, Sigma, kappa,
     burn_in = 1000, scale_X = TRUE, ci_level = 0.95
 ) {
@@ -276,14 +276,14 @@ run_MH_sampler <- function(
 #' Grid search over MEP priors with automatic selection and CIs
 #'
 #' Try a grid of prior settings \eqn{(\mu, \Sigma, \kappa)} for the MEP-regularized
-#' logistic model, fit each via \code{\link{run_MH_sampler}}, and select a single
+#' logistic model, fit each via \code{\link{MEP_latent}}, and select a single
 #' run using an acceptance-rate window and (if available) closeness to a GLM
 #' coefficient-ratio reference. Credible intervals are carried through from the
 #' selected run.
 #'
 #' @param y Binary outcome (0/1, logical, or 2-level factor/character).
 #' @param X Matrix or data.frame of predictors (no intercept).
-#' @param n_iter,burn_in,init_beta,step_size Passed to \code{\link{run_MH_sampler}}.
+#' @param n_iter,burn_in,init_beta,step_size Passed to \code{\link{MEP_latent}}.
 #' @param mu_vals Numeric vector; each value is repeated to length \eqn{p}
 #'   (intercept + predictors) to form \eqn{\mu}.
 #' @param Sigma_list List of \eqn{p \times p} positive-definite matrices for the prior scale.
@@ -302,14 +302,14 @@ run_MH_sampler <- function(
 #'   \item{\code{best_prop_matched}}{Posterior predictive “match” statistic of the selected run.}
 #'   \item{\code{posterior_means}}{Posterior means for the selected run.}
 #'   \item{\code{standardized_coefs_back}}{Data frame of back-transformed effects with CIs
-#'         (A / SAS / Long / M scales).}
+#'         (A / SAS / Long scales).}
 #'   \item{\code{scaled_summary}}{Data frame of working-space summaries with CIs (includes intercept).}
 #'   \item{\code{Ref_ratio}}{Character string of the GLM reference coefficient ratio (if available).}
 #'   \item{\code{results_table}}{Data frame summarizing all grid runs (acceptance, ratios, etc.).}
 #'   \item{\code{ci_level}}{Credible interval level used.}
 #' }
 #'
-#' @seealso \code{\link{run_MH_sampler}}, \code{\link{latent_separation}}, \code{\link{uni_separation}}
+#' @seealso \code{\link{MEP_latent}}, \code{\link{latent_separation}}, \code{\link{uni_separation}}
 #' @importFrom stats glm binomial coef
 #' @examples
 #' \donttest{
@@ -365,7 +365,7 @@ mep_grid_search <- function(
       sigma_str <- paste(Sigma, collapse = ", ")
       for (kappa in kappa_vals) {
 
-        run <- run_MH_sampler(
+        run <- MEP_latent(
           n_iter = n_iter, init_beta = init_beta, step_size = step_size,
           X_orig = X, y = y, mu = mu, Sigma = Sigma, kappa = kappa,
           burn_in = burn_in, scale_X = scale_X, ci_level = ci_level

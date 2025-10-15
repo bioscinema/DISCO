@@ -26,7 +26,7 @@ mep_grid_search(
 
 \item{X}{Matrix or data.frame of predictors (no intercept).}
 
-\item{n_iter, burn_in, init_beta, step_size}{Passed to \code{\link{run_MH_sampler}}.}
+\item{n_iter, burn_in, init_beta, step_size}{Passed to \code{\link{MEP_latent}}.}
 
 \item{mu_vals}{Numeric vector; each value is repeated to length \eqn{p}
 (intercept + predictors) to form \eqn{\mu}.}
@@ -53,7 +53,7 @@ A list with:
 \item{\code{best_prop_matched}}{Posterior predictive “match” statistic of the selected run.}
 \item{\code{posterior_means}}{Posterior means for the selected run.}
 \item{\code{standardized_coefs_back}}{Data frame of back-transformed effects with CIs
-(A / SAS / Long / M scales).}
+(A / SAS / Long scales).}
 \item{\code{scaled_summary}}{Data frame of working-space summaries with CIs (includes intercept).}
 \item{\code{Ref_ratio}}{Character string of the GLM reference coefficient ratio (if available).}
 \item{\code{results_table}}{Data frame summarizing all grid runs (acceptance, ratios, etc.).}
@@ -62,7 +62,7 @@ A list with:
 }
 \description{
 Try a grid of prior settings \eqn{(\mu, \Sigma, \kappa)} for the MEP-regularized
-logistic model, fit each via \code{\link{run_MH_sampler}}, and select a single
+logistic model, fit each via \code{\link{MEP_latent}}, and select a single
 run using an acceptance-rate window and (if available) closeness to a GLM
 coefficient-ratio reference. Credible intervals are carried through from the
 selected run.
@@ -81,5 +81,5 @@ head(gs$standardized_coefs_back)
 }
 }
 \seealso{
-\code{\link{run_MH_sampler}}, \code{\link{latent_separation}}, \code{\link{uni_separation}}
+\code{\link{MEP_latent}}, \code{\link{latent_separation}}, \code{\link{uni_separation}}
 }
