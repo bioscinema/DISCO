@@ -42,7 +42,7 @@ library(DISCO)
 ```r
 library(DISCO)
 
-#### Univariate: quick diagnostic #############
+#### I. Univariate: quick diagnostic #############
 df <- data.frame(Y = c(0,1,0,1), X = c(-2, 2, -1, 1))
 res <- uni_separation(df, predictor = "X", outcome = "Y", missing = "complete")
 res$separation_type     # "Perfect separation" | "Quasi-complete separation" | "No separation problem"
@@ -50,7 +50,7 @@ res$severity_score      # in [0,1]
 res$boundary_threshold  # data-driven non-negative threshold
 res$missing_info        # method, params, rows_used, n_used
 
-#### Latent (multivariate): LP-based check ####
+#### II. Latent (multivariate): LP-based check ####
 y <- c(0,0,0,0,1,1,1,1)
 X <- cbind(
   X1 = c(-1.86, -0.81, 1.32, -0.40, 0.91, 2.49, 0.34, 0.25),
@@ -69,7 +69,7 @@ lat_scaled <- latent_separation(y, X, missing = "complete", scale_X = TRUE)
 lat_min <- latent_separation(
   y, X,
   find_minimal   = TRUE,
-  min_vars       = 1,              # smallest subset size to consider
+  min_vars       = 2,              # smallest subset size to consider
   max_vars       = ncol(X),        # largest subset size (default is all)
   stop_at_first  = FALSE
 )
