@@ -46,20 +46,20 @@ before fitting; credible intervals are still reported on both the scaled and ori
 }
 \value{
 A list with components:
-\describe{
-\item{\code{posterior_chain}}{Matrix of draws after burn-in (\code{iter} \eqn{\times} \eqn{p}).}
-\item{\code{posterior_means}}{Posterior means (length \eqn{p}).}
-\item{\code{se_estimates}}{Posterior standard deviations (length \eqn{p}).}
-\item{\code{acceptance_rate}}{Overall MH acceptance rate.}
-\item{\code{prop_matched}}{Posterior predictive check: proportion of observations
-whose replicated outcomes match the observed more than 80\\% of the time.}
-\item{\code{scaled_summary}}{Data frame (including Intercept) with columns
-\code{Mean}, \code{SD}, \code{CI_low}, \code{CI_high} in the working (logit/possibly scaled) space.}
-\item{\code{standardized_coefs_back}}{Data frame (per predictor) with means and CIs for:
+\itemize{
+\item \code{posterior_chain}: Matrix of draws after burn-in (\code{iter} \eqn{\times} \eqn{p}).
+\item \code{posterior_means}: Posterior means (length \eqn{p}).
+\item \code{se_estimates}: Posterior standard deviations (length \eqn{p}).
+\item \code{acceptance_rate}: Overall MH acceptance rate.
+\item \code{prop_matched}: Posterior predictive check: proportion of observations
+whose replicated outcomes match the observed more than 80\\% of the time.
+\item \code{scaled_summary}: Data frame (including Intercept) with columns
+\code{Mean}, \code{SD}, \code{CI_low}, \code{CI_high} in the working (logit/possibly scaled) space.
+\item \code{standardized_coefs_back}: Data frame (per predictor) with means and CIs for:
 \code{Scaled} (working space), and back-transformed effects on
-\code{b_A_original}, \code{b_SAS_original}, \code{b_Long_original}.}
-\item{\code{scaling_info}}{List with \code{scale_X} flag and centering/scaling vectors (if used).}
-\item{\code{ci_level}}{Credible interval level used.}
+\code{b_A_original}, \code{b_SAS_original}, \code{b_Long_original}.
+\item \code{scaling_info}: List with \code{scale_X} flag and centering/scaling vectors (if used).
+\item \code{ci_level}: Credible interval level used.
 }
 }
 \description{

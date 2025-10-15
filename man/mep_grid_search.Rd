@@ -47,17 +47,17 @@ the window yields no candidates (default \code{0.35}).}
 }
 \value{
 A list with:
-\describe{
-\item{\code{best_settings}}{List with chosen \code{mu}, \code{Sigma}, \code{kappa}.}
-\item{\code{best_acceptance}}{Acceptance rate of the selected run.}
-\item{\code{best_prop_matched}}{Posterior predictive “match” statistic of the selected run.}
-\item{\code{posterior_means}}{Posterior means for the selected run.}
-\item{\code{standardized_coefs_back}}{Data frame of back-transformed effects with CIs
-(A / SAS / Long scales).}
-\item{\code{scaled_summary}}{Data frame of working-space summaries with CIs (includes intercept).}
-\item{\code{Ref_ratio}}{Character string of the GLM reference coefficient ratio (if available).}
-\item{\code{results_table}}{Data frame summarizing all grid runs (acceptance, ratios, etc.).}
-\item{\code{ci_level}}{Credible interval level used.}
+\itemize{
+\item \code{best_settings}: List with chosen \code{mu}, \code{Sigma}, \code{kappa}.
+\item \code{best_acceptance}: Acceptance rate of the selected run.
+\item \code{best_prop_matched}: Posterior predictive “match” statistic of the selected run.
+\item \code{posterior_means}: Posterior means for the selected run.
+\item \code{standardized_coefs_back}: Data frame of back-transformed effects with CIs
+(A / SAS / Long scales).
+\item \code{scaled_summary}: Data frame of working-space summaries with CIs (includes intercept).
+\item \code{Ref_ratio}: Character string of the GLM reference coefficient ratio (if available).
+\item \code{results_table}: Data frame summarizing all grid runs (acceptance, ratios, etc.).
+\item \code{ci_level}: Credible interval level used.
 }
 }
 \description{

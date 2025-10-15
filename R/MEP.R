@@ -27,20 +27,20 @@
 #' @param ci_level Numeric in \eqn{(0,1)}. Credible interval level (default \code{0.95}).
 #'
 #' @return A list with components:
-#' \describe{
-#'   \item{\code{posterior_chain}}{Matrix of draws after burn-in (\code{iter} \eqn{\times} \eqn{p}).}
-#'   \item{\code{posterior_means}}{Posterior means (length \eqn{p}).}
-#'   \item{\code{se_estimates}}{Posterior standard deviations (length \eqn{p}).}
-#'   \item{\code{acceptance_rate}}{Overall MH acceptance rate.}
-#'   \item{\code{prop_matched}}{Posterior predictive check: proportion of observations
-#'     whose replicated outcomes match the observed more than 80\% of the time.}
-#'   \item{\code{scaled_summary}}{Data frame (including Intercept) with columns
-#'     \code{Mean}, \code{SD}, \code{CI_low}, \code{CI_high} in the working (logit/possibly scaled) space.}
-#'   \item{\code{standardized_coefs_back}}{Data frame (per predictor) with means and CIs for:
+#' \itemize{
+#'   \item \code{posterior_chain}: Matrix of draws after burn-in (\code{iter} \eqn{\times} \eqn{p}).
+#'   \item \code{posterior_means}: Posterior means (length \eqn{p}).
+#'   \item \code{se_estimates}: Posterior standard deviations (length \eqn{p}).
+#'   \item \code{acceptance_rate}: Overall MH acceptance rate.
+#'   \item \code{prop_matched}: Posterior predictive check: proportion of observations
+#'     whose replicated outcomes match the observed more than 80\% of the time.
+#'   \item \code{scaled_summary}: Data frame (including Intercept) with columns
+#'     \code{Mean}, \code{SD}, \code{CI_low}, \code{CI_high} in the working (logit/possibly scaled) space.
+#'   \item \code{standardized_coefs_back}: Data frame (per predictor) with means and CIs for:
 #'     \code{Scaled} (working space), and back-transformed effects on
-#'     \code{b_A_original}, \code{b_SAS_original}, \code{b_Long_original}.}
-#'   \item{\code{scaling_info}}{List with \code{scale_X} flag and centering/scaling vectors (if used).}
-#'   \item{\code{ci_level}}{Credible interval level used.}
+#'     \code{b_A_original}, \code{b_SAS_original}, \code{b_Long_original}.
+#'   \item \code{scaling_info}: List with \code{scale_X} flag and centering/scaling vectors (if used).
+#'   \item \code{ci_level}: Credible interval level used.
 #' }
 #'
 #' @details
@@ -258,7 +258,7 @@ MEP_latent <- function(
     acceptance_rate = acc,
     prop_matched    = prop_matched,
     scaled_summary  = scaled_summary,            # includes Intercept
-    standardized_coefs_back = std_back,          # includes means + CIs for A/SAS/Long/M
+    standardized_coefs_back = std_back,          # includes means + CIs for A/SAS/Long
     scaling_info = list(scale_X = scale_X,
                         center = if (isTRUE(scale_X)) attr(X_work, "scaled:center") else NULL,
                         scale  = if (isTRUE(scale_X)) attr(X_work, "scaled:scale")  else NULL),
@@ -296,17 +296,17 @@ MEP_latent <- function(
 #' @param ci_level Numeric in \eqn{(0,1)}. Credible interval level (default \code{0.95}).
 #'
 #' @return A list with:
-#' \describe{
-#'   \item{\code{best_settings}}{List with chosen \code{mu}, \code{Sigma}, \code{kappa}.}
-#'   \item{\code{best_acceptance}}{Acceptance rate of the selected run.}
-#'   \item{\code{best_prop_matched}}{Posterior predictive “match” statistic of the selected run.}
-#'   \item{\code{posterior_means}}{Posterior means for the selected run.}
-#'   \item{\code{standardized_coefs_back}}{Data frame of back-transformed effects with CIs
-#'         (A / SAS / Long scales).}
-#'   \item{\code{scaled_summary}}{Data frame of working-space summaries with CIs (includes intercept).}
-#'   \item{\code{Ref_ratio}}{Character string of the GLM reference coefficient ratio (if available).}
-#'   \item{\code{results_table}}{Data frame summarizing all grid runs (acceptance, ratios, etc.).}
-#'   \item{\code{ci_level}}{Credible interval level used.}
+#' \itemize{
+#'   \item \code{best_settings}: List with chosen \code{mu}, \code{Sigma}, \code{kappa}.
+#'   \item \code{best_acceptance}: Acceptance rate of the selected run.
+#'   \item \code{best_prop_matched}: Posterior predictive “match” statistic of the selected run.
+#'   \item \code{posterior_means}: Posterior means for the selected run.
+#'   \item \code{standardized_coefs_back}: Data frame of back-transformed effects with CIs
+#'         (A / SAS / Long scales).
+#'   \item \code{scaled_summary}: Data frame of working-space summaries with CIs (includes intercept).
+#'   \item \code{Ref_ratio}: Character string of the GLM reference coefficient ratio (if available).
+#'   \item \code{results_table}: Data frame summarizing all grid runs (acceptance, ratios, etc.).
+#'   \item \code{ci_level}: Credible interval level used.
 #' }
 #'
 #' @seealso \code{\link{MEP_latent}}, \code{\link{latent_separation}}, \code{\link{uni_separation}}
