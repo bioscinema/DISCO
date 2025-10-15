@@ -42,7 +42,7 @@ library(DISCO)
 ```r
 library(DISCO)
 
-# Univariate: quick diagnostic
+#### Univariate: quick diagnostic #############
 df <- data.frame(Y = c(0,1,0,1), X = c(-2, 2, -1, 1))
 res <- uni_separation(df, predictor = "X", outcome = "Y", missing = "complete")
 res$separation_type     # "Perfect separation" | "Quasi-complete separation" | "No separation problem"
@@ -50,13 +50,35 @@ res$severity_score      # in [0,1]
 res$boundary_threshold  # data-driven non-negative threshold
 res$missing_info        # method, params, rows_used, n_used
 
-# Latent (multivariate): LP-based check
+#### Latent (multivariate): LP-based check ####
 y <- c(0,0,0,0,1,1,1,1)
 X <- cbind(
   X1 = c(-1.86, -0.81, 1.32, -0.40, 0.91, 2.49, 0.34, 0.25),
   X2 = c( 0.52,  1.07, 0.60,  0.67,-1.39, 0.16,-1.40,-0.09)
 )
-latent_separation(y, X)$type  # "perfect separation" (for this example)
+lat <- latent_separation(y, X, missing = "complete")  # scale_X = FALSE by default
+lat$type           # "Perfect separation" | "Quasi-complete separation" | "No separation problem"
+lat$message        # human-readable summary
+lat$removed        # for quasi: variables whose removal yields perfect (else NULL)
+lat$missing_info   # method, params, rows_used, n_used
+
+# Optional: enable z-score scaling of the encoded predictors
+lat_scaled <- latent_separation(y, X, missing = "complete", scale_X = TRUE)
+
+# Search for inclusion-minimal separating subsets (pruned search)
+lat_min <- latent_separation(
+  y, X,
+  find_minimal   = TRUE,
+  min_vars       = 1,              # smallest subset size to consider
+  max_vars       = ncol(X),        # largest subset size (default is all)
+  stop_at_first  = FALSE
+)
+names(lat_min$minimal_subsets)     # e.g., "X1", "X2", "X1_X2"
+one <- lat_min$minimal_subsets[[1]]
+one$type          # "Perfect separation" or "Quasi-complete separation"
+one$vars          # variables in the subset
+one$removed       # for quasi-only; variables whose removal yields perfect
+one$missing_info  # rows used, etc.
 ```
 
 ### Missing-Data Handling

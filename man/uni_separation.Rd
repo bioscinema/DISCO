@@ -40,7 +40,7 @@ A list with fields:
 "Quasi-complete separation", "No separation problem",
 "Constant outcome", "Constant predictor")
 \item \code{separation_index} (Rand index)
-\item \code{severity_score} in \link{0,1}
+\item \code{severity_score} in \code{[0,1]}
 \item \code{rand_details} (list from \code{rand_index})
 \item \code{single_tie_boundary} (logical), \code{tie_rows_boundary} (integer)
 \item \code{boundary_threshold} (numeric)

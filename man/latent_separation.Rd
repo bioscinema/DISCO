@@ -16,7 +16,8 @@ latent_separation(
   max_vars = NULL,
   stop_at_first = FALSE,
   missing = c("complete", "impute"),
-  impute_args = list()
+  impute_args = list(),
+  scale_X = FALSE
 )
 }
 \arguments{
@@ -50,6 +51,8 @@ latent_separation(
 \item \code{logical_method}: "mode" (default) or "missing"
 \item \code{custom_fn}: function(data.frame) -> imputed data.frame
 }}
+
+\item{scale_X}{Logical; if TRUE, standardize encoded predictors with base \code{scale()} (default FALSE).}
 }
 \value{
 If not searching: single result list {type, removed?, message, missing_info}.

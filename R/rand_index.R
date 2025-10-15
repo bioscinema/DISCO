@@ -8,7 +8,7 @@
 #'
 #' @return A list with:
 #' \itemize{
-#'   \item \code{rand_index} Rand index in [0,1] or \code{NA} if \eqn{n < 2}.
+#'   \item \code{rand_index} Rand index in \code{[0,1]} or \code{NA} if \eqn{n < 2}.
 #'   \item \code{a}, \code{b}, \code{c}, \code{d} Pair counts.
 #' }
 #' @examples

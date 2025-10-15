@@ -19,6 +19,7 @@
 #'     \item \code{logical_method}: "mode" (default) or "missing"
 #'     \item \code{custom_fn}: function(data.frame) -> imputed data.frame
 #'   }
+#' @param scale_X Logical; if TRUE, standardize encoded predictors with base \code{scale()} (default FALSE).
 #' @return If not searching: single result list {type, removed?, message, missing_info}.
 #'         If searching: list with $minimal_subsets (named by vars joined with "_"), each containing
 #'         {type, vars, removed?, missing_info}.
@@ -34,7 +35,8 @@ latent_separation <- function(
     max_vars = NULL,
     stop_at_first = FALSE,
     missing = c("complete","impute"),
-    impute_args = list()
+    impute_args = list(),
+    scale_X = FALSE
 ) {
   mode <- match.arg(mode)
   missing <- match.arg(missing)
@@ -78,6 +80,11 @@ latent_separation <- function(
     X1 <- mh$X
     # encode_predictors_lp expects no NAs; ensured by missing handling
     X1_mm <- encode_predictors_lp(X1)
+
+    # optional scaling with base scale()
+    if (isTRUE(scale_X)) {
+      X1_mm <- scale(X1_mm)
+    }
 
     out <- .check_sep(y1, X1_mm, mode = mode_local)
     out$missing_info <- list(
