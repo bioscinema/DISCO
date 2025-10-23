@@ -40,7 +40,7 @@
 #'   (\pkg{logistf}) on the same rows for reference.
 #' @param return_draws Logical; if \code{TRUE}, include posterior draws on
 #'   standardized and original scales. Default \code{FALSE}.
-#' @param seed Optional integer RNG seed.
+#' @param seed For reproducibility, default 2025.
 #'
 #' @param transform_beta1 One of \code{"none"}, \code{"logit"}, \code{"SAS"}, \code{"Long"}.
 #'   If not \code{"none"}, also reports \code{beta0_orig} and the chosen slope on the
@@ -171,7 +171,7 @@ EP_univariable <- function(
     ci_level = 0.95,
     compare = TRUE,
     return_draws = FALSE,
-    seed = NULL,
+    seed = 2025,
     # back-transform choice for beta1 (and corresponding intercept)
     transform_beta1 = c("none","logit","SAS","Long"),
     # prior defaults (aligned with your SLURM script)

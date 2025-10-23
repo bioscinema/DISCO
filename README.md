@@ -1,7 +1,7 @@
 # DISCO
 **DI**agnosis of **S**eparation and **C**orrection of **O**dds-ratio inflation in logistic regression
 
-> Fast diagnostics for **perfect** and **quasi-complete** separation in binary outcomes, with clear severity scoring, per-subset missing-data handling, and pretty `gt` tables — plus a severity-adaptive univariate Bayesian estimator.
+> Fast diagnostics for **perfect** and **quasi-complete** separation in binary outcomes, with clear severity scoring, per-subset missing-data handling, and pretty `gt` tables — plus severity-adaptive and MEP-regularized Bayesian estimators.
 
 ---
 
@@ -24,17 +24,14 @@ When predictors **perfectly** (or almost perfectly) split the outcome, logistic 
   - handle missingness **per subset** (complete-case or imputation).
 
 ### Estimation (Bayesian)
-- `EP_univariable()` — **severity-adaptive univariate** logistic regression with a **Exponential Power** prior (RW–MH sampler).  
+- `EP_univariable()` — **severity-adaptive univariate** logistic regression with an **Exponential Power (EP)** prior (RW–MH sampler).  
   **Default output:** standardized coefficients `beta0` and `beta1` (z-scored X working scale).  
   **Optional back-transform:** set `transform_beta1 = "logit" | "SAS" | "Long"` to add `beta0_orig` and a slope per 1 unit of the **original** predictor.
-- `MEP_latent()` — logistic regression with an **Multivariate Exponential Power** prior for **multi-predictor** models, fit via MH. Returns posterior draws, working-space summaries, and credible intervals for back-transformed effects on:
-  - **Scaled** (working/logit space),
-  - **A** (per-SD of original X on log-odds),
-  - **SAS** (= A × π/√3),
-  - **Long** (= A × (π/√3 + 1)).
-- `mep_grid_search()` — try a grid over provided \((\mu,\Sigma,\kappa)\), select a run using acceptance-rate & a GLM coefficient-ratio reference, and carry through CIs.
+- `mep_function()` — **core multi-predictor** logistic sampler with a **Multivariate Exponential Power (MEP)** prior for user-specified \((\mu,\Sigma,\kappa)\). Returns working-scale summaries **with CIs** and back-transformed effects (**A / SAS / Long**, with CIs).
+- `MEP_latent()` — **grid search** over \((\mu,\Sigma,\kappa)\) for multi-predictor models using `mep_function()`; selects one run using an **acceptance-rate window**, **posterior predictive agreement**, and (when available) **GLM coefficient-ratio** closeness. Carries through **CIs** from the selected run.
+- `MEP_mixture()` — **severity-adaptive multi-predictor** logistic with **numeric + factor** predictors. Encodes factors via `model.matrix(~ ., data = X)`, anchors slope prior scales by **per-predictor DISCO severities**, runs a small grid (intercept mean offsets, global slope multipliers, κ), and selects one run via acceptance window + checks. Reports posterior **means** on the standardized scale and back-transformed **A / SAS / Long** **means** per encoded column; also provides GLM/Firth/MEP **ratios**.
 
-Planned: odds-ratio deflation after separation detection. *(uni-sep and mixture situation coming soon.)*
+Planned: odds-ratio deflation after separation detection.
 
 ---
 
@@ -356,10 +353,9 @@ fit_long <- EP_univariable(df, "x", "y", transform_beta1 = "Long",
 
 ## Bayesian Estimation with MEP (multivariate; posterior means & CIs)
 
-**When to use:** After your screen flags separation risk in multi-predictor settings, fit a logistic model with an MEP prior to stabilize estimation.  
-Defaults: `MEP_latent(..., scale_X = TRUE)`; `mep_grid_search(..., scale_X = TRUE)`.
+**When to use:** After your screen flags separation risk in multi-predictor settings, fit a logistic model with an MEP prior to stabilize estimation.
 
-### Quick start
+### Core sampler (fixed prior): `mep_function()`
 
 ```r
 set.seed(1)
@@ -368,16 +364,14 @@ X <- cbind(
   X1 = c(-1.86, -0.81,  1.32, -0.40,  0.91,  2.49,  0.34,  0.25),
   X2 = c( 0.52,  1.07,  0.60,  0.67, -1.39,  0.16, -1.40, -0.09)
 )
-
 p <- ncol(X) + 1
-fit <- MEP_latent(
-  n_iter = 10000, burn_in = 1000,
-  init_beta = rep(0.01, p), step_size = 0.4,
+fit <- mep_function(
+  n_iter = 10000, burn_in = 1000, init_beta = rep(0.01, p), step_size = 0.4,
   X_orig = X, y = y, mu = rep(0, p), Sigma = diag(p), kappa = 1,
   scale_X = TRUE, ci_level = 0.95
 )
 
-# Working-space summary (includes Intercept)
+# Working-space summary (includes Intercept) with CIs
 head(fit$scaled_summary)
 
 # Back-transformed effects with 95% CIs (per predictor; no intercept):
@@ -385,31 +379,25 @@ head(fit$scaled_summary)
 head(fit$standardized_coefs_back)
 ```
 
-**Returned components (high level):**
-- `posterior_chain` — draws after burn-in.
-- `scaled_summary` — mean/SD/CI for Intercept and predictors **in working/logit space**.
-- `standardized_coefs_back` — per-predictor means and CIs on:
-  - **Scaled** (working/logit space),
-  - **A** (per-SD of original X on log-odds),
-  - **SAS** (= A × π/√3),
-  - **Long** (= A × (π/√3 + 1)).
-- `acceptance_rate`, `prop_matched` (simple posterior predictive diagnostic),
-- `scaling_info` (if `scale_X = TRUE`), and `ci_level`.
+> Note: The output does **not** include an “M” scale; only **Scaled / A / SAS / Long** are returned.
 
-> Note: The output does **not** include “M”-scale columns; only Scaled / A / SAS / Long are reported.
-
-### Prior grid search helper
+### Prior grid search (auto-selected run): `MEP_latent()`
 
 ```r
-gs <- mep_grid_search(
+set.seed(1)
+y <- c(0,0,0,0,1,1,1,1)
+X <- cbind(
+  X1 = c(-1.86,-0.81, 1.32,-0.40, 0.91, 2.49, 0.34, 0.25),
+  X2 = c( 0.52,-0.07, 0.60, 0.67,-1.39, 0.16,-1.40,-0.09)
+)
+gs <- MEP_latent(
   y, X,
-  n_iter = 10000, burn_in = 1000, step_size = 0.4,
+  n_iter = 10000, burn_in = 1000, init_beta = NULL, step_size = 0.4,
   mu_vals = seq(-1, 1, by = 0.1),
   Sigma_list = list(diag(ncol(X)+1), diag(ncol(X)+1)*0.1, diag(ncol(X)+1)*0.5,
                     diag(ncol(X)+1)*2,  diag(ncol(X)+1)*5),
   kappa_vals = c(0.5, 1, 2),
-  accept_window = c(0.3, 0.4),
-  accept_target = 0.35,
+  accept_window = c(0.3, 0.4), accept_target = 0.35,
   scale_X = TRUE, ci_level = 0.95
 )
 
@@ -420,10 +408,61 @@ head(gs$standardized_coefs_back) # A / SAS / Long with CIs
 
 **Selection logic (summary):**
 1. Filter runs by MH acceptance in `accept_window` (fallback to closest to `accept_target`).
-2. Prefer higher `prop_matched` if < 0.90 is observed; else minimize mean absolute diff to a GLM coefficient-ratio reference (on the same scaling).
+2. Prefer higher `prop_matched` if < 0.90 is observed; else minimize mean absolute difference to a GLM coefficient-ratio reference (on the same scaling).
 
 ---
-### API cheatsheet
+
+## Severity-Adaptive MEP for Mixture (numeric + factor predictors): `MEP_mixture()`
+
+**What it does**
+- Encodes `X` via `model.matrix(~ ., data = X)` (intercept dropped for slopes).
+- For each **original** predictor (before encoding), computes a **DISCO severity** (on modeling rows).
+- Maps severity \( s \in [0,1] \) to an **anchor slope prior sd** and **κ** (intercept uses a wide prior).
+- Runs a small grid: **intercept mean offsets**, **global multiplier** on slope prior sds, and **κ** around the anchor average; chooses one run using an **acceptance window**, **posterior predictive agreement**, and (when available) **GLM ratio** closeness relative to a single **reference** predictor.
+- Returns posterior **means** (not CIs) for standardized slopes and back-transforms (**A / SAS / Long**) per **encoded column**; also returns GLM/Firth/MEP **betas & ratios**.
+
+**Factor handling & labels**
+- Treatment contrasts with the **first level as baseline**.
+- Two-level factor `X3` with levels `A` (baseline) and `B` yields dummy **`X3B`** (=1 for B, 0 for A). Its coefficient is **B vs A** (controlling for other predictors).
+- Change baseline before calling to alter dummy labels:
+  ```r
+  X$X3 <- stats::relevel(X$X3, ref = "B")
+  ```
+
+**Example**
+```r
+set.seed(1)
+y <- c(0,0,0,0, 1,1,1,1)
+X <- data.frame(
+  X1 = c(-1.86,-0.81, 1.32,-0.40, 0.91, 2.49, 0.34, 0.25),
+  X2 = c( 0.52,-0.07, 0.60, 0.67,-1.39, 0.16,-1.40,-0.09),
+  X3 = factor(c(rep("A",4), rep("B",4)))
+)
+
+fit <- MEP_mixture(
+  y, X,
+  n_iter_grid = 4000, burn_in_grid = 1000, step_size = 0.40,
+  sigma_hi = 5, sigma_lo = 0.15,
+  kappa_min = 1, kappa_max = 2.5,
+  sigma_global_multipliers = c(0.1, 0.5, 1, 2, 5, 10),
+  accept_window = c(0.30, 0.40),
+  accept_target = 0.35,
+  seed = 9, compare = TRUE
+)
+
+fit$ref_predictor       # chosen reference (original predictor index/name)
+fit$posterior$effects   # means for Scaled / b_A_original / b_SAS_original / b_Long_original
+fit$ratios$MEP_ratio_std
+```
+
+**Notes**
+- Standardization/back-transforms use **unscaled encoded** column SDs; for a 0/1 dummy with prevalence \(p\), SD is \(\sqrt{p(1-p)}\).
+- The **reference predictor** for ratios comes from original `X` (default = highest severity). If a factor, the denominator is its **first dummy**.
+- Outputs for `effects` are **means without CIs** in this version.
+
+---
+
+## API cheatsheet
 ```r
 # Univariate Detection
 uni_separation(
@@ -464,30 +503,50 @@ EP_univariable(
   tune_threshold_hi = 0.45, tune_threshold_lo = 0.20, tune_interval = 500
 )
 
-# Bayesian MEP logistic (multivariate estimation with CIs)
-MEP_latent(
+# Core MEP logistic (fixed prior; returns CIs)
+mep_function(
   n_iter, init_beta, step_size,
   X_orig, y, mu, Sigma, kappa,
   burn_in = 1000,
-  scale_X = TRUE,        # default TRUE
+  scale_X = TRUE,
   ci_level = 0.95
 )
 
-mep_grid_search(
+# Grid search over (mu, Sigma, kappa); auto-select; returns CIs from the best run
+MEP_latent(
   y, X,
   n_iter = 10000, burn_in = 1000, init_beta = NULL, step_size = 0.4,
   mu_vals = seq(-1, 1, by = 0.1),
-  Sigma_list = list(...), kappa_vals = c(0.5, 1, 2),
+  Sigma_list = list(...),
+  kappa_vals = c(0.5, 1, 2),
   accept_window = c(0.3, 0.4), accept_target = 0.35,
-  scale_X = TRUE,        # default TRUE
-  ci_level = 0.95
+  scale_X = TRUE, ci_level = 0.95
+)
+
+# Severity-anchored MEP with factors; grid + selection; returns means (no CIs)
+MEP_mixture(
+  y, X,
+  missing = "complete",
+  severity_missing = c("complete","impute"),
+  impute_args = list(),
+  n_iter_grid = 10000, burn_in_grid = 1000,
+  step_size = 0.40,
+  mu_intercept_offsets = seq(-1, 1, by = 0.2),
+  sigma0_intercept = 10,
+  sigma_global_multipliers = c(0.1, 0.5, 1, 2, 5, 10),
+  sigma_hi = 5, sigma_lo = 0.15,
+  kappa_min = 1, kappa_max = 2.5,
+  kappa_delta = seq(-0.5, 0.5, by = 0.2),
+  accept_window = c(0.30, 0.40), accept_target = 0.35,
+  ref = NULL, compare = TRUE, seed = 2025,
+  return_draws = FALSE
 )
 ```
 
 ### Notes & assumptions
 - Outcome is binary and will be normalized to `{0,1}` (supports logical or 2-level factor/character).
-- Categorical predictors are handled directly (univariate) or via dummy encoding (latent).
-- The **severity score** scales the Rand index above a data-driven, non-negative boundary and penalizes single-tie inflation.
+- Categorical predictors are handled directly (univariate) or via dummy encoding (latent / mixture).
+- **MEP_mixture** outputs are per **encoded** column (e.g., `FactorLevel` dummies). Change baselines with `stats::relevel()` to alter dummy interpretation.
 
 ### Testing
 

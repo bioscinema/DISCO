@@ -1,8 +1,4 @@
-# =============================================================================
-# mep.R  —  MEP-regularized logistic regression via MH, with credible intervals
-# =============================================================================
-
-#' Metropolis–Hastings sampler for MEP-regularized logistic regression
+#' Severity-Adaptive MEP for Pure Latent (multi-predictor) Logistic
 #'
 #' Run a simple random-walk Metropolis–Hastings sampler for a logistic model
 #' with a Multivariate Exponential Power (MEP) prior on the coefficient vector.
@@ -66,7 +62,7 @@
 #'   X2 = c( 0.52,  1.07,  0.60,  0.67, -1.39,  0.16, -1.40, -0.09)
 #' )
 #' p <- ncol(X) + 1
-#' fit <- MEP_latent(
+#' fit <- mep_function(
 #'   n_iter = 10000, burn_in = 1000, init_beta = rep(0.01, p), step_size = 0.4,
 #'   X_orig = X, y = y, mu = rep(0, p), Sigma = diag(p), kappa = 1,
 #'   scale_X = TRUE, ci_level = 0.95
@@ -75,7 +71,7 @@
 #' head(fit$standardized_coefs_back)
 #' }
 #' @export
-MEP_latent <- function(
+mep_function <- function(
     n_iter, init_beta, step_size, X_orig, y, mu, Sigma, kappa,
     burn_in = 1000, scale_X = TRUE, ci_level = 0.95
 ) {
@@ -276,14 +272,14 @@ MEP_latent <- function(
 #' Grid search over MEP priors with automatic selection and CIs
 #'
 #' Try a grid of prior settings \eqn{(\mu, \Sigma, \kappa)} for the MEP-regularized
-#' logistic model, fit each via \code{\link{MEP_latent}}, and select a single
+#' logistic model, fit each via \code{\link{mep_function}}, and select a single
 #' run using an acceptance-rate window and (if available) closeness to a GLM
 #' coefficient-ratio reference. Credible intervals are carried through from the
 #' selected run.
 #'
 #' @param y Binary outcome (0/1, logical, or 2-level factor/character).
 #' @param X Matrix or data.frame of predictors (no intercept).
-#' @param n_iter,burn_in,init_beta,step_size Passed to \code{\link{MEP_latent}}.
+#' @param n_iter,burn_in,init_beta,step_size Passed to \code{\link{mep_function}}.
 #' @param mu_vals Numeric vector; each value is repeated to length \eqn{p}
 #'   (intercept + predictors) to form \eqn{\mu}.
 #' @param Sigma_list List of \eqn{p \times p} positive-definite matrices for the prior scale.
@@ -309,7 +305,7 @@ MEP_latent <- function(
 #'   \item \code{ci_level}: Credible interval level used.
 #' }
 #'
-#' @seealso \code{\link{MEP_latent}}, \code{\link{latent_separation}}, \code{\link{uni_separation}}
+#' @seealso \code{\link{mep_function}}, \code{\link{latent_separation}}, \code{\link{uni_separation}}
 #' @importFrom stats glm binomial coef
 #' @examples
 #' \donttest{
@@ -319,12 +315,12 @@ MEP_latent <- function(
 #'   X1 = c(-1.86, -0.81,  1.32, -0.40,  0.91,  2.49,  0.34,  0.25),
 #'   X2 = c( 0.52,  1.07,  0.60,  0.67, -1.39,  0.16, -1.40, -0.09)
 #' )
-#' gs <- mep_grid_search(y, X, n_iter = 10000, burn_in = 1000, scale_X = TRUE)
+#' gs <- MEP_latent(y, X, n_iter = 10000, burn_in = 1000, scale_X = TRUE)
 #' gs$best_settings
 #' head(gs$standardized_coefs_back)
 #' }
 #' @export
-mep_grid_search <- function(
+MEP_latent <- function(
     y, X,
     n_iter = 10000, burn_in = 1000, init_beta = NULL, step_size = 0.4,
     mu_vals = seq(-1, 1, by = 0.1),
@@ -365,7 +361,7 @@ mep_grid_search <- function(
       sigma_str <- paste(Sigma, collapse = ", ")
       for (kappa in kappa_vals) {
 
-        run <- MEP_latent(
+        run <- mep_function(
           n_iter = n_iter, init_beta = init_beta, step_size = step_size,
           X_orig = X, y = y, mu = mu, Sigma = Sigma, kappa = kappa,
           burn_in = burn_in, scale_X = scale_X, ci_level = ci_level
