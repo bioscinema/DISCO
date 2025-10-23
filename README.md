@@ -299,7 +299,7 @@ This table summarizes subsets of predictors that yield separation in an **imputa
 
 ## Severity-adaptive Univariate Bayes (EP_univariable)
 
-`EP_univariable()` fits **intercept + one predictor** logistic regression with a **severity-adaptive MEP prior** informed by `uni_separation()`. It uses a random-walk MH sampler with light auto-tuning.
+`EP_univariable()` fits **intercept + one predictor** logistic regression with a **severity-adaptive EP prior** informed by `uni_separation()`. It uses a random-walk MH sampler with light auto-tuning.
 
 **Defaults (match SLURM script):**
 - `n_iter = 20000`, `burn_in = 5000`
