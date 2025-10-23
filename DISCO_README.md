@@ -1,12 +1,12 @@
 # DISCO
 **DI**agnosis of **S**eparation and **C**orrection of **O**dds-ratio inflation in logistic regression
 
-> Fast diagnostics for **perfect** and **quasi-complete** separation in binary outcomes, with clear severity scoring, per-subset missing-data handling, and pretty `gt` tables.
+> Fast diagnostics for **perfect** and **quasi-complete** separation in binary outcomes, with clear severity scoring, per-subset missing-data handling, and pretty `gt` tables — plus a severity-adaptive univariate Bayesian estimator.
 
 ---
 
 ## Why separation matters
-When predictors **perfectly** (or almost perfectly) split the outcome, logistic regression can produce **infinite** (or severely inflated) odds ratios and unstable inference. **DISCO** helps you **detect** these cases early and (soon) **correct** estimates.
+When predictors **perfectly** (or almost perfectly) split the outcome, logistic regression can produce **infinite** (or severely inflated) odds ratios and unstable inference. **DISCO** helps you **detect** these cases early and (optionally) **stabilize** estimates with Bayesian priors.
 
 ---
 
@@ -24,13 +24,15 @@ When predictors **perfectly** (or almost perfectly) split the outcome, logistic 
   - handle missingness **per subset** (complete-case or imputation).
 
 ### Estimation (Bayesian)
-- `MEP_latent()` — logistic regression with a **Multivariate Exponential Power (MEP)** prior, fit via MH. Returns posterior draws, working-space summaries, and credible intervals for back-transformed effects on:
+- `EP_univariable()` — **severity-adaptive univariate** logistic regression with a **Exponential Power** prior (RW–MH sampler).  
+  **Default output:** standardized coefficients `beta0` and `beta1` (z-scored X working scale).  
+  **Optional back-transform:** set `transform_beta1 = "logit" | "SAS" | "Long"` to add `beta0_orig` and a slope per 1 unit of the **original** predictor.
+- `MEP_latent()` — logistic regression with an **Multivariate Exponential Power** prior for **multi-predictor** models, fit via MH. Returns posterior draws, working-space summaries, and credible intervals for back-transformed effects on:
   - **Scaled** (working/logit space),
   - **A** (per-SD of original X on log-odds),
   - **SAS** (= A × π/√3),
   - **Long** (= A × (π/√3 + 1)).
 - `mep_grid_search()` — try a grid over provided \((\mu,\Sigma,\kappa)\), select a run using acceptance-rate & a GLM coefficient-ratio reference, and carry through CIs.
-
 
 Planned: odds-ratio deflation after separation detection. *(uni-sep and mixture situation coming soon.)*
 
@@ -168,7 +170,7 @@ gt_uni_separation_all(df_miss, outcome = "Y", missing = "complete")
 
 ![Univariate DISCO table](man/figures/readme-uni-gt-all.png)
 
-This table summarize univariate screen results of each predictor against the outcome (`Y`) using **complete-case** data. It flags whether any single predictor causes separation in a logistic model.
+This table summarizes univariate screen results of each predictor against the outcome (`Y`) using **complete-case** data. It flags whether any single predictor causes separation in a logistic model.
 
 - **Predictor / Outcome**  
   The variable tested and the binary outcome.
@@ -196,10 +198,10 @@ This table summarize univariate screen results of each predictor against the out
 - Example
 
   - **X1** has **Separation Index = 1.000**, **Severity = 1.000**, and is labeled **Perfect Separation** with **N Used = 9**.  
-  → X1 alone perfectly separates `Y` on the complete-case subset (rows `1, 2, 4, 5, 6, 7, 9, 10, 12`). Standard logistic regression MLE will not be finite; consider remedies (e.g., Firth penalization, Bayesian priors, or data/model modifications).
+    → X1 alone perfectly separates `Y` on the complete-case subset (rows `1, 2, 4, 5, 6, 7, 9, 10, 12`). Standard logistic regression MLE will not be finite; consider remedies (e.g., Firth penalization, Bayesian priors, or data/model modifications).
 
   - **Race, L1, X2** show **Separation Index ≈ 0.57–0.61**, **Severity = 0.000**, and **No Problem**.  
-  → These predictors do **not** induce separation in univariate fits on their respective complete-case samples (N Used = 8–9).
+    → These predictors do **not** induce separation in univariate fits on their respective complete-case samples (N Used = 8–9).
 
   - All rows used are reported as **original indices**. Since the method is *Complete*, the full list is shown for each predictor.
 
@@ -212,7 +214,7 @@ res_lat_cc <- latent_separation(
   find_minimal = TRUE,
   missing = "complete"
 )
-gt_latent_separation(res_lat_cc, title = "Latent Minimal Subsets — Complate-Case")
+gt_latent_separation(res_lat_cc, title = "Latent Minimal Subsets — Complete-Case")
 ```
 ![Latent DISCO table](man/figures/readme-latent-gt-complete.png)
 
@@ -236,7 +238,6 @@ This table summarizes subsets of predictors that yield separation in a **complet
 
 - **Rows Used (Original Indices)**  
   The original dataset row numbers included in the complete-case fit for that subset. We always report **original indices** (not re-indexed after filtering).
-  
 
 - Example
   - **X1_X2, X2_L1, Race_L1, X1_Race, X2_Race**  
@@ -263,7 +264,7 @@ gt_latent_separation(res_lat_imp, title = "Latent Minimal Subsets — Imputed")
 ```
 ![Latent DISCO table](man/figures/readme-latent-gt.png)
 
-This table summarizes subsets of predictors that yield separation in a **impuataion analysis**. Each row corresponds to one predictor subset.
+This table summarizes subsets of predictors that yield separation in an **imputation analysis**. Each row corresponds to one predictor subset.
 
 - **Subset / Variables / # Of Predictors**  
   The subset name, which variables it includes, and its size.
@@ -296,10 +297,67 @@ This table summarizes subsets of predictors that yield separation in a **impuata
 ---
 ---
 
-## Bayesian Estimation with MEP (posterior means & credible intervals)
+## Severity-adaptive Univariate Bayes (EP_univariable)
 
-**When to use:** After your screen flags separation risk, fit a logistic model with an MEP prior to stabilize estimation.  
-Defaults: `MEP_latent(..., scale_X = TRUE)`; `mep_grid_search(..., scale_X = TRUE)`. (By contrast, `latent_separation` defaults to `scale_X = FALSE`.)
+`EP_univariable()` fits **intercept + one predictor** logistic regression with a **severity-adaptive MEP prior** informed by `uni_separation()`. It uses a random-walk MH sampler with light auto-tuning.
+
+**Defaults (match SLURM script):**
+- `n_iter = 20000`, `burn_in = 5000`
+- Proposal s.d. blend: `step = 0.30*(1-severity) + 0.12*severity`
+- Prior scales: `sigma0 = 10`, `sigma1_hi = 5`, `sigma1_lo = 0.15`
+- Shape blend: `kappa = 1 + severity*(2.5 - 1)`
+- Missing-data handling propagated from `uni_separation()`
+
+**Output (by default):** standardized coefficients `beta0`, `beta1`  
+*(z-scored X working scale; good for across-predictor comparability)*
+
+**Optional back-transform:** choose one:
+- `transform_beta1 = "logit"` → add `beta0_orig`, `beta1_logit` (per 1 unit of original X)  
+- `transform_beta1 = "SAS"`   → add `beta0_orig`, `beta1_SAS = beta1_logit * π/√3`  
+- `transform_beta1 = "Long"`  → add `beta0_orig`, `beta1_Long = beta1_logit * (π/√3 + 1)`
+
+### Quick start
+
+```r
+set.seed(1)
+n  <- 60
+x  <- rnorm(n, mean = 0.3, sd = 1)
+eta <- -0.2 + 1.0 * x
+y  <- rbinom(n, size = 1, prob = plogis(eta))
+df <- data.frame(y = y, x = x)
+
+# (1) Default: STANDARDIZED beta0, beta1
+fit_std <- EP_univariable(df, predictor = "x", outcome = "y",
+                          n_iter = 6000, burn_in = 2000, seed = 42)
+fit_std$posterior
+
+# (2) Back-transform slope to ORIGINAL-x units on LOGIT scale
+fit_logit <- EP_univariable(df, "x", "y",
+                            transform_beta1 = "logit",
+                            n_iter = 6000, burn_in = 2000, seed = 42)
+fit_logit$posterior
+
+# (3) Alternative effect scales on ORIGINAL-x units
+fit_sas  <- EP_univariable(df, "x", "y", transform_beta1 = "SAS",
+                           n_iter = 6000, burn_in = 2000, seed = 42)
+fit_long <- EP_univariable(df, "x", "y", transform_beta1 = "Long",
+                           n_iter = 6000, burn_in = 2000, seed = 42)
+```
+
+**Interpretation**
+- `beta1` (default) — change in log-odds per **1 SD** increase in X (standardized scale).
+- `beta1_logit` — change in log-odds per **1 unit** increase in original X.
+- `beta1_SAS = beta1_logit * (π/√3)`; `beta1_Long = beta1_logit * (π/√3 + 1)`.
+- `beta0_orig` aligns the intercept with original X-units.
+
+**Dependencies:** `DISCO` (for severity); `logistf` optional (Firth comparator).
+
+---
+
+## Bayesian Estimation with MEP (multivariate; posterior means & CIs)
+
+**When to use:** After your screen flags separation risk in multi-predictor settings, fit a logistic model with an MEP prior to stabilize estimation.  
+Defaults: `MEP_latent(..., scale_X = TRUE)`; `mep_grid_search(..., scale_X = TRUE)`.
 
 ### Quick start
 
@@ -392,17 +450,21 @@ latent_separation(
   scale_X = FALSE     # set TRUE to z-score encoded predictors
 )
 
-# Tables (optional)
-gt_uni_separation(res, title = NULL, subtitle = NULL, show_rows_used = FALSE)
-gt_latent_separation(res, title = NULL, subtitle = NULL, show_rows_used = FALSE)
-gt_uni_separation_all(
-  data, outcome = "Y", predictors = NULL,
-  missing = c("complete","impute"),
-  impute_args = list(...),
-  include_constant = FALSE, only_hits = FALSE
+# Severity-adaptive Univariate Bayes
+EP_univariable(
+  data, predictor, outcome = "y",
+  missing = c("complete","impute"), impute_args = list(),
+  n_iter = 20000, burn_in = 5000,
+  step_hi = 0.30, step_lo = 0.12,
+  ci_level = 0.95, compare = TRUE,
+  return_draws = FALSE, seed = NULL,
+  transform_beta1 = c("none","logit","SAS","Long"),
+  sigma0 = 10, sigma1_hi = 5, sigma1_lo = 0.15,
+  kappa_min = 1, kappa_max = 2.5,
+  tune_threshold_hi = 0.45, tune_threshold_lo = 0.20, tune_interval = 500
 )
 
-# Bayesian MEP logistic (estimation with CIs)
+# Bayesian MEP logistic (multivariate estimation with CIs)
 MEP_latent(
   n_iter, init_beta, step_size,
   X_orig, y, mu, Sigma, kappa,
@@ -420,14 +482,12 @@ mep_grid_search(
   scale_X = TRUE,        # default TRUE
   ci_level = 0.95
 )
-
 ```
 
 ### Notes & assumptions
-- Outcome is binary and will be normalized to '{0,1}' (supports logical or 2-level factor/character).
+- Outcome is binary and will be normalized to `{0,1}` (supports logical or 2-level factor/character).
 - Categorical predictors are handled directly (univariate) or via dummy encoding (latent).
 - The **severity score** scales the Rand index above a data-driven, non-negative boundary and penalizes single-tie inflation.
-
 
 ### Testing
 
@@ -442,7 +502,3 @@ devtools::test()
 # or
 testthat::test_dir("tests/testthat")
 ```
-
-## Roadmap
-Estimation correction: odds-ratio deflation after detection (coming soon).
-
