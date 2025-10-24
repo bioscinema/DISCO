@@ -7,8 +7,7 @@
 MEP_mixture(
   y,
   X,
-  missing = c("complete"),
-  severity_missing = c("complete", "impute"),
+  missing = c("complete", "impute"),
   impute_args = list(),
   n_iter_grid = 10000,
   burn_in_grid = 1000,
@@ -24,8 +23,9 @@ MEP_mixture(
   accept_window = c(0.3, 0.4),
   accept_target = 0.35,
   ref = NULL,
-  compare = TRUE,
-  seed = 2025,
+  transform_back = c("none", "logit", "SAS", "Long"),
+  ci_level = 0.95,
+  seed = NULL,
   return_draws = FALSE
 )
 }
@@ -35,15 +35,13 @@ MEP_mixture(
 \item{X}{Matrix or data.frame of predictors (no intercept). May include factors.
 Rows must align with \code{y}.}
 
-\item{missing}{How to treat missing values in \emph{modeling}: only \code{"complete"} is
-supported; rows with any NA in \code{y} or \code{X} are dropped. Default \code{"complete"}.}
+\item{missing}{One of \code{"complete"} or \code{"impute"}; the same choice is applied
+to both modeling and severity diagnostics (shared rows/values). Default \code{"complete"}.}
 
-\item{severity_missing}{How to treat missing values when computing per-predictor DISCO
-severities: passed to \code{DISCO::uni_separation()} (\code{"complete"} or \code{"impute"}).
-Default \code{"complete"}.}
-
-\item{impute_args}{Optional list of imputation settings used only when
-\code{severity_missing = "impute"} (see \code{DISCO::uni_separation}).}
+\item{impute_args}{Optional list controlling simple external imputation when
+\code{missing = "impute"}. Supported:
+\code{numeric_method = "median"|"mean"} (default \code{"median"}),
+\code{factor_method = "mode"} (default \code{"mode"}).}
 
 \item{n_iter_grid}{Integer; MH iterations per grid point (including burn-in). Default \code{10000}.}
 
@@ -79,10 +77,18 @@ ratio denominator. If \code{NULL} (default), the predictor with the highest
 univariate severity is used. If the reference is a factor, the denominator
 column is the \emph{first} dummy generated for that factor.}
 
-\item{compare}{Logical; if \code{TRUE} (default), fit GLM and Firth (\code{logistf})
-on the standardized encoded design as comparators.}
+\item{transform_back}{One of \code{"none"}, \code{"logit"}, \code{"SAS"}, \code{"Long"}. Controls which
+back-transform is reported alongside standardized coefficients. Default \code{"none"}.
+\itemize{
+\item \code{"logit"}: per-\strong{unit} effect on the original encoded column,
+computed as \eqn{\beta^{\mathrm{std}}/s_x}.
+\item \code{"SAS"}: \eqn{\beta^{\mathrm{SAS}} = \beta^{\mathrm{logit}} \cdot \pi/\sqrt{3}}.
+\item \code{"Long"}: \eqn{\beta^{\mathrm{Long}} = \beta^{\mathrm{logit}} \cdot (\pi/\sqrt{3} + 1)}.
+}}
 
-\item{seed}{For reproducibility, default 2025.}
+\item{ci_level}{Credible interval level in (0,1). Default \code{0.95}.}
+
+\item{seed}{Optional integer; if provided, sets RNG seed for reproducibility.}
 
 \item{return_draws}{Logical; if \code{TRUE}, return the post-burn MH chain for the
 selected grid run.}
@@ -103,19 +109,20 @@ A list with components:
 \item \code{means_std}: posterior means on the standardized encoded design
 (length = intercept + encoded slopes),
 \item \code{effects}: data.frame with per encoded column:
-\code{Predictor}, \code{Scaled} (standardized slope),
-\code{b_A_original}, \code{b_SAS_original}, \code{b_Long_original}.
+\code{Predictor}, \code{Scaled}, \code{Scaled_CI_low}, \code{Scaled_CI_high},
+plus \strong{one optional trio} depending on \code{transform_back}:
+\code{b_logit_original}/\code{b_logit_CI_low}/\code{b_logit_CI_high} \emph{or}
+\code{b_SAS_original}/\code{b_SAS_CI_low}/\code{b_SAS_CI_high} \emph{or}
+\code{b_Long_original}/\code{b_Long_CI_low}/\code{b_Long_CI_high}.
 }
-\item \code{ratios}: list of vectors on the encoded design:
-\code{GLM_beta}, \code{GLM_ratio}, \code{Firth_beta}, \code{Firth_ratio},
-\code{MEP_beta_std}, \code{MEP_ratio_std},
-and back-transform families \code{MEP_beta_b_A_original},
-\code{MEP_beta_b_SAS_original}, \code{MEP_beta_b_Long_original},
-plus their ratios \code{MEP_ratio_b_A_original},
-\code{MEP_ratio_b_SAS_original}, \code{MEP_ratio_b_Long_original}.
-Ratios divide by the encoded column corresponding to the reference predictor
-(first dummy if factor).
-\item \code{comparators}: list with raw \code{glm} and \code{firth} fits (if available).
+\item \code{ratios}: list with
+\itemize{
+\item \code{GLM_beta}, \code{GLM_ratio} (standardized encoded design),
+\item \code{MEP_beta_std}, \code{MEP_ratio_std},
+\item and \strong{if} \code{transform_back != "none"}:
+\verb{MEP_beta_b_<SCALE>_original} and \verb{MEP_ratio_b_<SCALE>_original}
+for the chosen \verb{<SCALE>} in {\code{logit},\code{SAS},\code{Long}}.
+}
 \item \code{draws}: matrix of MH draws after burn-in for the selected run
 (returned only when \code{return_draws = TRUE}).
 }
@@ -133,37 +140,42 @@ and—when available—closeness to GLM coefficient ratios relative to a referen
 \code{model.matrix(~ ., data = X)} (intercept dropped for slopes). Numeric columns remain
 one column each. Factor columns are expanded to treatment-contrast dummies (baseline is
 the first level). The RW–MH is run on the \emph{standardized} encoded design (z-scored
-columns), but standardized back-transforms (A, SAS, Long) are reported for each encoded
-column using the \emph{unscaled} encoded design.
+columns). Optionally, coefficients can be back-transformed to the original (unscaled)
+encoded columns via \code{transform_back = "logit"|"SAS"|"Long"}.
 
 \strong{Standardization & back-transforms.} The sampler runs on z-scored encoded columns.
-Reported \code{Scaled} slopes are posterior means on this working scale. Back-transforms
-use the encoded column SDs: \code{A} is per-SD effect on log-odds;
-\code{SAS} is \code{A} multiplied by \eqn{\pi/\sqrt{3}};
-\code{Long} is \code{A} multiplied by \eqn{\pi/\sqrt{3} + 1}.
+\code{Scaled} slopes are posterior means on this working scale. Let \eqn{s_x} be the SD of the
+unscaled encoded column: \code{logit} back-transform uses \eqn{\beta^{\mathrm{std}}/s_x};
+\code{SAS} and \code{Long} multiply the \code{logit} transform by \eqn{\pi/\sqrt{3}} and \eqn{\pi/\sqrt{3}+1}
+respectively.
 
 \strong{Reference predictor & ratios.} The ratio denominator is chosen from the original
 \code{X} columns (highest DISCO severity by default). If that predictor is a factor,
 the denominator is the \emph{first} dummy column generated for that factor by
-\code{model.matrix()}. GLM/Firth ratios are computed on the standardized encoded design.
+\code{model.matrix()}. GLM ratios are computed on the standardized encoded design.
 
-\strong{Missing data.} This version supports only \code{missing = "complete"} for modeling
-(drop rows with NA in \code{y} or any column of \code{X}). For severity anchoring you may use
-\code{severity_missing = "impute"} with \code{impute_args} which are passed to
-\code{DISCO::uni_separation()}.
+\strong{Shared missing handling.} The \code{missing} choice governs a single preprocessing
+step applied to \verb{(y, X)}. With \code{missing = "complete"} we drop rows with any NA in
+\code{y} or \code{X}. With \code{missing = "impute"} we drop rows with NA in \code{y} and impute
+NAs in \code{X} using \code{impute_args}. The same processed data are then used for both the
+MEP fit and the DISCO severities (we call \code{DISCO::uni_separation(..., missing = "complete")}
+because the data are already prepared). \strong{Numeric predictors are z-scored when computing
+DISCO severities} (factors unchanged) to align the anchoring scale with the modeling scale.
 }
 \section{What this function does}{
 
 \itemize{
-\item For each \emph{original} predictor in \code{X}, compute a univariate \strong{severity}
-using \code{DISCO::uni_separation()} on the modeling rows.
-\item Map severity \eqn{s \in [0,1]} to an anchor slope prior scale \eqn{\sigma_j(s)}
+\item Applies a single missing-data policy to \verb{(y, X)} \strong{once} (complete-case or external imputation).
+\item For each \emph{original} predictor in \code{X}, computes a univariate \strong{severity}
+using \code{DISCO::uni_separation()} on the same rows used for modeling.
+Numeric predictors are \strong{z-scored for the severity computation} (factors unchanged).
+\item Maps severity \eqn{s \in [0,1]} to an anchor slope prior scale \eqn{\sigma_j(s)}
 and an anchor \eqn{\kappa_j(s)}; the intercept uses a wide prior.
-\item Build a small grid: intercept mean offsets, global multipliers on the \eqn{\sigma_j},
-and \eqn{\kappa} around the anchor average; run RW–MH for each grid point.
-\item Select one run using a score favoring acceptance in a target window, high posterior
-predictive agreement, and closeness of standardized
-slope ratios to GLM ratios (with a single \emph{reference} denominator).
+\item Builds a small grid: intercept mean offsets, global multipliers on the \eqn{\sigma_j},
+and \eqn{\kappa} around the anchor average; runs RW–MH for each grid point.
+\item Selects one run using a score favoring acceptance in a target window, high posterior
+predictive agreement, and closeness of standardized slope ratios to \strong{GLM} ratios
+(with a single \emph{reference} denominator).
 }
 }
 
@@ -180,9 +192,6 @@ design includes a single dummy column \code{X3B}, which equals 1 when
 is the log-odds difference \emph{B vs A} (controlling for other predictors).
 \item The output \code{posterior$effects$Predictor} uses these encoded names: numeric
 predictors as \code{"Xk"}; factor dummies as \code{"FactorLevel"} (e.g., \code{X3B}).
-Back-transforms (\code{b_A_original}, \code{b_SAS_original}, \code{b_Long_original})
-are computed per encoded column using that column’s standard deviation
-(for a 0/1 dummy with prevalence \eqn{p}, \eqn{\mathrm{sd}=\sqrt{p(1-p)}}).
 \item \strong{Change the baseline} beforehand to alter dummy labels:
 \preformatted{X$X3 <- stats::relevel(X$X3, ref = "B")  # baseline becomes B; dummy shows as X3A}
 \item If you truly intend to \emph{treat a factor as numeric}, convert it yourself:
@@ -192,54 +201,97 @@ are computed per encoded column using that column’s standard deviation
 
 \examples{
 \donttest{
-
-## Example 2: toy with uni- and latent separation
-## X3 alone perfectly separates y (A for 0s, B for 1s);
-## X1 and X2 do not separate alone, but z = X1 - 5*X2 does (latent separation).
-set.seed(1)
+## Toy data with one numeric factor and one 2-level factor
 y <- c(0,0,0,0, 1,1,1,1)
 X_toy <- data.frame(
   X1 = c(-1.86, -0.81,  1.32, -0.40,  0.91,  2.49,  0.34,  0.25),
   X2 = c( 0.52,  -0.07,  0.60,  0.67, -1.39,  0.16, -1.40, -0.09),
   X3 = factor(c(rep("A", 4), rep("B", 4)))
 )
-# Univariate diagnostics
+
+## 0) Univariate DISCO diagnostics (complete-case)
 d3 <- DISCO::uni_separation(data.frame(y=y, X3=X_toy$X3), "X3", "y", "complete")
 d1 <- DISCO::uni_separation(data.frame(y=y, X1=X_toy$X1), "X1", "y", "complete")
 d2 <- DISCO::uni_separation(data.frame(y=y, X2=X_toy$X2), "X2", "y", "complete")
 d3$separation_type; d1$separation_type; d2$separation_type
 
-# Latent (manual): z = X1 - 5*X2 separates perfectly
-z <- X_toy$X1 - 5 * X_toy$X2
-dz <- DISCO::uni_separation(data.frame(y = y, z = z), "z", "y", "complete")
-dz$separation_type  # "Perfect separation"
-
-# Latent (automatic): inclusion-minimal separating subsets of {X1, X2}
-lat <- DISCO::latent_separation(
-  y = y,
-  X = X_toy[, c("X1", "X2")],
-  find_minimal  = TRUE,
-  mode          = "either",
-  missing       = "complete",
-  scale_X       = FALSE
+## 1) Standardized-only coefficients (includes CIs for Scaled slopes)
+fit_std <- MEP_mixture(
+  y, X_toy,
+  n_iter_grid = 4000, burn_in_grid = 1000, seed = 42,
+  transform_back = "none", ci_level = 0.95
 )
-names(lat$minimal_subsets)              # e.g., "X1_X2"
-lat$minimal_subsets[[1]]$type           # "Perfect separation"
-lat$minimal_subsets[[1]]$vars           # c("X1","X2")
+head(fit_std$posterior$effects)
+# Columns: Predictor, Scaled, Scaled_CI_low, Scaled_CI_high
 
-# Fit MEP_mixture (factor X3 will appear as a dummy 'X3B' = B vs A)
-fit_toy <- MEP_mixture(y, X_toy, n_iter_grid = 4000, burn_in_grid = 1000, seed = 9)
-fit_toy$ref_predictor
-fit_toy$posterior$effects     # includes "X3B" (dummy for B vs A)
+## 2) Back-transform to LOGIT (per-encoded-unit effect) with CIs
+fit_logit <- MEP_mixture(
+  y, X_toy,
+  n_iter_grid = 4000, burn_in_grid = 1000, seed = 42,
+  transform_back = "logit"
+)
+subset(fit_logit$posterior$effects,
+       select = c("Predictor","b_logit_original","b_logit_CI_low","b_logit_CI_high"))
 
-# Change baseline level to rename the dummy (now "X3A" = A vs B)
+## 3) Alternative effect scales with CIs (choose ONE per run)
+fit_sas <- MEP_mixture(
+  y, X_toy,
+  n_iter_grid = 4000, burn_in_grid = 1000, seed = 42,
+  transform_back = "SAS"
+)
+fit_long <- MEP_mixture(
+  y, X_toy,
+  n_iter_grid = 4000, burn_in_grid = 1000, seed = 42,
+  transform_back = "Long"
+)
+subset(fit_sas$posterior$effects,
+       select = c("Predictor","b_SAS_original","b_SAS_CI_low","b_SAS_CI_high"))
+subset(fit_long$posterior$effects,
+       select = c("Predictor","b_Long_original","b_Long_CI_low","b_Long_CI_high"))
+
+## 4) Change baseline level to rename the dummy (now "X3A" = A vs B)
 X_toy2 <- X_toy
 X_toy2$X3 <- stats::relevel(X_toy2$X3, ref = "B")
-fit_toy2 <- MEP_mixture(y, X_toy2, n_iter_grid = 2000, burn_in_grid = 500, seed = 9)
-fit_toy2$posterior$effects
-}
+fit_base <- MEP_mixture(
+  y, X_toy2,
+  n_iter_grid = 3000, burn_in_grid = 800, seed = 7,
+  transform_back = "logit"
+)
+head(fit_base$posterior$effects)   # dummy appears as "X3A"
 
+## 5) Shared missing handling
+X_miss <- X_toy
+X_miss$X1[c(2,6)] <- NA      # numeric NA
+X_miss$X3[7]      <- NA      # factor NA
+
+# (a) complete-case: drops rows with any NA in X
+fit_cc <- MEP_mixture(
+  y, X_miss,
+  missing = "complete",
+  n_iter_grid = 3000, burn_in_grid = 800, seed = 9, transform_back = "Long"
+)
+head(fit_cc$posterior$effects)
+
+# (b) impute: imputes X (numeric=median; factor=mode by default),
+#     then uses the same imputed data for DISCO + model
+fit_im <- MEP_mixture(
+  y, X_miss,
+  missing = "impute",
+  impute_args = list(numeric_method = "median"),
+  n_iter_grid = 3000, burn_in_grid = 800, seed = 9, transform_back = "logit"
+)
+head(fit_im$posterior$effects)
+
+## 6) Inspect selection & ratios
+fit <- fit_logit
+fit$severity
+head(fit$grid_summary)
+fit$best
+names(fit$ratios)                 # includes GLM & MEP ratios
+fit$ratios$GLM_ratio
+fit$ratios$MEP_ratio_std
+}
 }
 \seealso{
-\code{\link[DISCO]{uni_separation}}, \code{\link[logistf]{logistf}}
+\code{DISCO::uni_separation}, \code{DISCO::latent_separation}
 }

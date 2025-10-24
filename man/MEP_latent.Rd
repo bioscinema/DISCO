@@ -2,84 +2,269 @@
 % Please edit documentation in R/MEP_Latent.R
 \name{MEP_latent}
 \alias{MEP_latent}
-\title{Grid search over MEP priors with automatic selection and CIs}
+\title{Severity-Adaptive MEP for Pure Latent (multi-predictor) Logistic — unified}
 \usage{
 MEP_latent(
   y,
   X,
+  missing = c("complete", "impute"),
+  impute_args = list(),
   n_iter = 10000,
   burn_in = 1000,
-  init_beta = NULL,
   step_size = 0.4,
   mu_vals = seq(-1, 1, by = 0.1),
-  Sigma_list = list(diag(ncol(X) + 1), diag(ncol(X) + 1) * 0.1, diag(ncol(X) + 1) * 0.5,
-    diag(ncol(X) + 1) * 2, diag(ncol(X) + 1) * 5),
+  sigma0_intercept = 10,
+  sigma_global_multipliers = c(0.1, 0.5, 1, 2, 5, 10),
   kappa_vals = c(0.5, 1, 2),
   accept_window = c(0.3, 0.4),
   accept_target = 0.35,
-  scale_X = TRUE,
-  ci_level = 0.95
+  ci_level = 0.95,
+  ppc_threshold = 0.8,
+  tune_threshold_hi = 0.45,
+  tune_threshold_lo = 0.2,
+  tune_interval = 500,
+  verbose = FALSE,
+  seed = NULL
 )
 }
 \arguments{
 \item{y}{Binary outcome (0/1, logical, or 2-level factor/character).}
 
-\item{X}{Matrix or data.frame of predictors (no intercept).}
+\item{X}{Matrix or data.frame of predictors (no intercept). May include factors.
+Rows must align with \code{y}.}
 
-\item{n_iter, burn_in, init_beta, step_size}{Passed to \code{\link{mep_function}}.}
+\item{missing}{How to handle missing data (applied once, shared by fitting and GLM):
+\code{"complete"} (drop rows with any NA in \code{y} or any column of \code{X}),
+or \code{"impute"} (drop rows with NA in \code{y}, then impute NAs in \code{X}
+\emph{before} factor encoding: numeric columns by mean/median; factor/character/logical
+columns by mode). Default \code{"complete"}.}
+
+\item{impute_args}{Optional list of imputation settings used only when
+\code{missing = "impute"}:
+\itemize{
+\item \code{numeric_method = "median"|"mean"} (default \code{"median"})
+\item \code{factor_method  = "mode"}           (default \code{"mode"})
+}}
+
+\item{n_iter}{Integer; total MCMC iterations per grid point (including burn-in).
+Default \code{10000}.}
+
+\item{burn_in}{Integer; burn-in iterations discarded from the front.
+Default \code{1000}.}
+
+\item{step_size}{Proposal standard deviation for RW–MH. Default \code{0.40}.}
 
 \item{mu_vals}{Numeric vector; each value is repeated to length \eqn{p}
-(intercept + predictors) to form \eqn{\mu}.}
+(intercept + predictors) to form \eqn{\mu} in the prior grid.}
 
-\item{Sigma_list}{List of \eqn{p \times p} positive-definite matrices for the prior scale.}
+\item{sigma0_intercept}{Prior scale for the intercept entry of \eqn{\Sigma}
+(logit scale). Default \code{10}.}
 
-\item{kappa_vals}{Numeric vector of positive \eqn{\kappa} values.}
+\item{sigma_global_multipliers}{Numeric vector of global multipliers applied
+to all \emph{slope} prior scales (intercept held at \code{sigma0_intercept}).
+For each multiplier \code{gm}, the prior scale matrix is
+\code{diag(c(sigma0_intercept, rep(gm, p-1)))}. Default
+\code{c(0.1, 0.5, 1, 2, 5, 10)}.}
 
-\item{accept_window}{Numeric length-2 vector giving the acceptable MH acceptance-rate
-window (default \code{c(0.3, 0.4)}).}
+\item{kappa_vals}{Numeric vector of positive \eqn{\kappa} values (EP shape)
+to include in the grid. Default \code{c(0.5, 1, 2)}.}
 
-\item{accept_target}{Numeric. Target acceptance used to pick the closest run if
-the window yields no candidates (default \code{0.35}).}
+\item{accept_window}{Numeric length-2 vector giving the acceptable
+MH acceptance-rate window. Default \code{c(0.30, 0.40)}.}
 
-\item{scale_X}{Logical. If \code{TRUE} (default), predictors are z-scored before fitting.}
+\item{accept_target}{Numeric; target acceptance used to pick the closest run
+if no grid point falls in \code{accept_window}. Default \code{0.35}.}
 
-\item{ci_level}{Numeric in \eqn{(0,1)}. Credible interval level (default \code{0.95}).}
+\item{ci_level}{Credible interval level in \eqn{(0,1)}. Default \code{0.95}.}
+
+\item{ppc_threshold}{Posterior predictive match threshold; the returned
+\code{prop_matched} is the fraction of observations whose replicated
+outcomes match the observed at least this proportion across posterior
+draws. Default \code{0.80}.}
+
+\item{tune_threshold_hi, tune_threshold_lo}{Burn-in acceptance thresholds for
+multiplicative step-size tuning (increase if \code{> hi}; decrease if
+\code{< lo}). Defaults \code{0.45} and \code{0.20}.}
+
+\item{tune_interval}{Iterations between tuning checks during burn-in.
+Default \code{500}.}
+
+\item{verbose}{Logical; print brief progress messages. Default \code{FALSE}.}
+
+\item{seed}{Optional integer; if provided, sets RNG seed for reproducibility.}
 }
 \value{
 A list with:
 \itemize{
-\item \code{best_settings}: List with chosen \code{mu}, \code{Sigma}, \code{kappa}.
-\item \code{best_acceptance}: Acceptance rate of the selected run.
-\item \code{best_prop_matched}: Posterior predictive “match” statistic of the selected run.
-\item \code{posterior_means}: Posterior means for the selected run.
-\item \code{standardized_coefs_back}: Data frame of back-transformed effects with CIs
-(A / SAS / Long scales).
-\item \code{scaled_summary}: Data frame of working-space summaries with CIs (includes intercept).
-\item \code{Ref_ratio}: Character string of the GLM reference coefficient ratio (if available).
-\item \code{results_table}: Data frame summarizing all grid runs (acceptance, ratios, etc.).
-\item \code{ci_level}: Credible interval level used.
+\item \code{best_settings}: list with chosen \code{mu} (as a string),
+\code{Sigma_diag} (prior diagonal as a string), and \code{kappa}.
+\item \code{best_acceptance}: MH acceptance rate of the selected run.
+\item \code{best_prop_matched}: posterior predictive “match” statistic for the selected run.
+\item \code{posterior_means}: posterior means (length \eqn{p}) for the selected run (working scale).
+\item \code{standardized_coefs_back}: data.frame (per \emph{encoded} column) with means and CIs for:
+\code{Scaled} (working space; slope w.r.t. standardized predictor),
+and back-transformed effects on
+\code{b_A_original}, \code{b_SAS_original}, \code{b_Long_original}.
+\item \code{scaled_summary}: data.frame (including Intercept) with columns
+\code{Mean}, \code{SD}, \code{CI_low}, \code{CI_high} in the working
+(logit/standardized) space.
+\item \code{Ref_ratio}: GLM reference coefficient-ratio string computed on the same standardized scaling (if available).
+\item \code{results_table}: data.frame summarizing all grid runs (acceptance, ratios, etc.).
+\item \code{ci_level}: credible interval level used.
+\item \code{rows_used}: integer indices of rows kept after missing handling.
+\item \code{missing_info}: list with \code{policy} and \code{imputed} flags.
 }
 }
 \description{
-Try a grid of prior settings \eqn{(\mu, \Sigma, \kappa)} for the MEP-regularized
-logistic model, fit each via \code{\link{mep_function}}, and select a single
-run using an acceptance-rate window and (if available) closeness to a GLM
-coefficient-ratio reference. Credible intervals are carried through from the
-selected run.
+Fits a logistic model with a Multivariate Exponential Power (MEP) prior
+via a random-walk Metropolis–Hastings (RW–MH) sampler and performs a small
+grid search over prior settings \eqn{(\mu, \Sigma, \kappa)}. Predictors are
+always z-scored internally for fitting (safe-scaling). Summaries and CIs are
+reported on the working (logit/standardized) scale and back-transformed to
+the original (encoded) predictor scale.
 }
+\details{
+\strong{Missing handling.}
+With \code{missing="complete"}, rows with any NA in \code{y} or \code{X} are dropped.
+With \code{missing="impute"}, rows with NA in \code{y} are dropped, then each column of
+\code{X} is imputed on the \emph{raw scale} before encoding: numeric columns by
+\code{median} (default) or \code{mean}; factor/character/logical columns by their
+\emph{mode} (most frequent level). After imputation, factors are encoded with
+\code{model.matrix()}, and the sampler runs on the standardized encoded design.
+
+\strong{Initialization.} The sampler starts at the prior mean \code{mu} for each grid
+point (no user-specified initial values).
+
+\strong{Sampler & prior.}
+The (unnormalized) MEP prior is
+\deqn{\pi(\beta \mid \mu,\Sigma,\kappa) \propto
+      \exp\left\{-\tfrac12\left[(\beta-\mu)^\top \Sigma^{-1}(\beta-\mu)\right]^\kappa\right\}.}
+We evaluate the quadratic form via a Cholesky of \eqn{\Sigma} and use stable
+\code{log1p/exp} algebra for the Bernoulli log-likelihood.
+
+\strong{Standardization and back-transforms (encoded scale).}
+Let \eqn{s_x} be the SD of an encoded column (numeric or 0/1 dummy) on the encoded
+\code{X} scale, and \eqn{\beta^{\mathrm{std}}} the slope in the standardized design.
+We report:
+\deqn{b_{\mathrm{A}} = \beta^{\mathrm{std}}/s_x, \quad
+      b_{\mathrm{SAS}} = b_{\mathrm{A}} \cdot \pi/\sqrt{3}, \quad
+      b_{\mathrm{Long}} = b_{\mathrm{A}} \cdot (\pi/\sqrt{3} + 1).}
+For a 0/1 dummy with prevalence \eqn{p}, \eqn{s_x = \sqrt{p(1-p)}}.
+
+\strong{Selection.}
+Among all grid runs, candidates are those with acceptance in \code{accept_window}
+(or closest to \code{accept_target} if none). When a GLM ratio is available, we prefer
+small mean absolute deviation from that ratio; ties are broken by higher posterior
+predictive agreement.
+}
+\section{What this function does}{
+
+\itemize{
+\item Handles missingness once (complete-case or imputation) on the
+\emph{raw} \code{X} and \code{y}, then uses the same rows for both
+fitting and the GLM reference.
+\item Encodes factors in \code{X} with \code{model.matrix(~ ., data = X)}
+(treatment contrasts, baseline = first level), drops the intercept,
+and fits on the numeric encoded design.
+\item Standardizes encoded predictors with a safe-scaler that guards against
+zero-variance columns (sets sd = 1 when sd = 0 or non-finite).
+\item For each grid setting, runs RW–MH with an EP prior and collects
+posterior means, credible intervals, and a posterior predictive
+“match” statistic.
+\item Selects a single run by (i) an acceptance-rate window, (ii) closeness
+to a GLM coefficient-ratio reference (computed on the same standardized
+working scale), and (iii) posterior predictive agreement.
+}
+}
+
+\section{Factor handling & column names}{
+
+\itemize{
+\item \strong{Numeric predictors} appear as a single column with their
+original name (e.g., \code{X3}). No suffixes are added.
+\item \strong{Factor predictors} are expanded by \code{model.matrix()}
+using treatment contrasts with the \emph{first level as the baseline}.
+For a two-level factor \code{X3} with levels \code{A} and \code{B}
+(baseline = \code{A}), the encoded design includes a single dummy
+column \code{X3B}, which equals 1 when \code{X3 == "B"} and 0 when
+\code{X3 == "A"}. The reported effects are for these encoded columns.
+\item \strong{Change the baseline} beforehand to alter dummy labels:
+\preformatted{X$X3 <- stats::relevel(X$X3, ref = "B")  # baseline becomes B; dummy shows as X3A}
+}
+}
+
 \examples{
 \donttest{
-set.seed(1)
-y <- c(0,0,0,0,1,1,1,1)
-X <- cbind(
+## Numeric example
+y <- c(0,0,0,0, 1,1,1,1)
+X <- data.frame(
   X1 = c(-1.86, -0.81,  1.32, -0.40,  0.91,  2.49,  0.34,  0.25),
-  X2 = c( 0.52,  1.07,  0.60,  0.67, -1.39,  0.16, -1.40, -0.09)
+  X2 = c( 0.52,  -0.07,  0.60,  0.67, -1.39,  0.16, -1.40, -0.09)
 )
-gs <- MEP_latent(y, X, n_iter = 10000, burn_in = 1000, scale_X = TRUE)
-gs$best_settings
-head(gs$standardized_coefs_back)
+
+## Latent (automatic): inclusion-minimal separating subsets of {X1, X2}
+lat <- DISCO::latent_separation(
+  y = y,
+  X = X,
+  find_minimal  = TRUE,
+  mode          = "either",
+  missing       = "complete",
+  scale_X       = FALSE
+)
+names(lat$minimal_subsets)              # e.g., "X1_X2"
+lat$minimal_subsets[[1]]$type           # "Perfect separation"
+lat$minimal_subsets[[1]]$vars           # c("X1","X2")
+
+## Complete-case
+gs_cc <- MEP_latent(
+  y = y, X = X,
+  n_iter = 10000, burn_in = 1000, step_size = 0.4,
+  mu_vals = seq(-1, 1, by = 0.2),
+  sigma0_intercept = 10,
+  sigma_global_multipliers = c(0.1, 0.5, 1, 2, 5),
+  kappa_vals = c(0.5, 1, 2),
+  missing = "complete",
+  seed = 42
+)
+gs_cc$best_settings
+gs_cc$scaled_summary
+gs_cc$standardized_coefs_back
+
+## Factor example (treatment coding; baseline = first level)
+Xf <- data.frame(
+  X1 = X$X1,
+  G  = factor(c("A","A","B","B","A","B","A","B"), levels = c("A","B"))
+)
+fit_f <- MEP_latent(
+  y = y, X = Xf,
+  n_iter = 8000, burn_in = 800,
+  mu_vals = seq(-0.5, 0.5, by = 0.25),
+  sigma_global_multipliers = c(0.5, 1, 2),
+  kappa_vals = c(1, 2),
+  missing = "complete",
+  seed = 99
+)
+fit_f$standardized_coefs_back     # contains column "GB" (= B vs A)
+
+## Impute: add an NA to a factor and a numeric column
+Xfi <- Xf
+Xfi$X1[1] <- NA
+Xfi$G[4]  <- NA
+fit_i <- MEP_latent(
+  y = y, X = Xfi,
+  n_iter = 6000, burn_in = 600,
+  mu_vals = seq(-0.5, 0.5, by = 0.25),
+  sigma_global_multipliers = c(0.5, 1, 2),
+  kappa_vals = c(1, 2),
+  missing = "impute",
+  impute_args = list(numeric_method = "median", factor_method = "mode"),
+  seed = 77
+)
+fit_i$rows_used
+head(fit_i$scaled_summary)
 }
 }
 \seealso{
-\code{\link{mep_function}}, \code{\link{latent_separation}}, \code{\link{uni_separation}}
+\code{\link{MEP_mixture}} for severity-anchored mixed predictors;
+\code{\link{EP_univariable}} for a univariate EP Bayes fit with DISCO severity.
 }

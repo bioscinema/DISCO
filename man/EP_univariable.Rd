@@ -17,7 +17,7 @@ EP_univariable(
   ci_level = 0.95,
   compare = TRUE,
   return_draws = FALSE,
-  seed = 2025,
+  seed = NULL,
   transform_beta1 = c("none", "logit", "SAS", "Long"),
   sigma0 = 10,
   sigma1_hi = 5,
@@ -36,12 +36,17 @@ EP_univariable(
 
 \item{outcome}{String; name of the binary outcome column (default \code{"y"}).}
 
-\item{missing}{How to handle missing data: \code{"complete"} (drop rows with any
-NA in \code{predictor} or \code{outcome}) or \code{"impute"} (impute the
-predictor only; outcome NA is always dropped). Default \code{"complete"}.}
+\item{missing}{How to handle missing data (applied \emph{once}, shared by severity
+and estimation): \code{"complete"} (drop rows with any NA in
+\code{predictor} or \code{outcome}) or \code{"impute"} (drop rows with NA in
+\code{outcome}, and impute \code{predictor} only). Default \code{"complete"}.}
 
-\item{impute_args}{Optional list of imputation settings passed to
-\code{DISCO::uni_separation()} (e.g., \code{list(numeric_method="median")}).}
+\item{impute_args}{Optional list of imputation settings used only when
+\code{missing = "impute"}:
+\itemize{
+\item \code{numeric_method = "median"|"mean"} (default \code{"median"})
+\item \code{factor_method = "mode"} (default \code{"mode"})
+}}
 
 \item{n_iter}{Integer; total MCMC iterations (including burn-in).
 Default \code{20000}.}
@@ -55,13 +60,13 @@ Defaults \code{0.30} and \code{0.12}.}
 
 \item{ci_level}{Credible interval level in (0,1). Default \code{0.95}.}
 
-\item{compare}{Logical; if \code{TRUE} (default) fit GLM and Firth logistic
-(\pkg{logistf}) on the same rows for reference.}
+\item{compare}{Logical; if \code{TRUE} (default) fit a GLM comparator on the same rows
+\emph{with standardized X} for reference.}
 
 \item{return_draws}{Logical; if \code{TRUE}, include posterior draws on
 standardized and original scales. Default \code{FALSE}.}
 
-\item{seed}{For reproducibility, default 2025.}
+\item{seed}{Optional integer; if provided, sets RNG seed for reproducibility.}
 
 \item{transform_beta1}{One of \code{"none"}, \code{"logit"}, \code{"SAS"}, \code{"Long"}.
 If not \code{"none"}, also reports \code{beta0_orig} and the chosen slope on the
@@ -100,8 +105,8 @@ A list with components:
 \code{beta0}, \code{beta1} (standardized) and, if requested via
 \code{transform_beta1}, \code{beta0_orig} plus one of
 \code{beta1_logit}/\code{beta1_SAS}/\code{beta1_Long}.
-\item \code{comparators}: list with \code{glm} and \code{firth} coefficient
-vectors when available.
+\item \code{comparators}: list with a \code{glm} coefficient vector (fit on standardized X)
+when available.
 \item \code{rows_used}: integer indices of rows used after missing handling.
 \item \code{draws} (optional): list with \code{chain_std} and \code{chain_orig}
 (included when \code{return_draws = TRUE}).
@@ -114,6 +119,20 @@ a univariate logistic model (intercept + one predictor) via random-walk
 Metropolis–Hastings (RW–MH).
 }
 \details{
+\strong{Shared missing handling.}
+The \code{missing} choice is applied once to \code{(data[[outcome]], data[[predictor]])}.
+With \code{missing = "complete"} we drop rows with any NA in those two columns.
+With \code{missing = "impute"} we drop rows with NA in the outcome, then impute
+NAs in the predictor using \code{impute_args}. The resulting rows/values are used
+for both the DISCO severity and the model fit. We call
+\code{DISCO::uni_separation(..., missing = "complete")} on the already-prepared data.
+
+\strong{Scaling for consistency.}
+Numeric predictors are z-scored (\emph{standardized}) for: (i) the Bayesian fit,
+(ii) the GLM comparator, and (iii) the DISCO severity computation.
+Factors are left unchanged in the severity step; for estimation/comparators a
+2-level factor is converted to a 0/1 indicator (error if >2 levels).
+
 \strong{Adaptive prior from severity.}
 Let \eqn{\bar{y}} be the sample mean on the analyzed rows and \eqn{s_x} the
 predictor SD (on those rows). The MEP prior on \eqn{(\beta_0,\beta_1)} (working,
@@ -151,30 +170,21 @@ slope per 1 unit change in the original predictor, on the chosen scale.
 }
 }
 
-\section{Interpretation}{
-
-\itemize{
-\item \code{beta1} (default) — change in log-odds per 1 SD increase in the predictor (standardized scale).
-\item \code{beta1_logit} — change in log-odds per 1 unit increase in the original predictor.
-\item \code{beta1_SAS} and \code{beta1_Long} — alternative effect scalings derived from \code{beta1_logit}.
-\item \code{beta0_orig} is the intercept consistent with original predictor units.
-}
-}
-
 \examples{
 \donttest{
-## Toy data: y ~ Bernoulli(logit^{-1}(-0.2 + 1.0 * x)) on ORIGINAL x units
-set.seed(1)
-n  <- 60
-x  <- rnorm(n, mean = 0.3, sd = 1)
-eta <- -0.2 + 1.0 * x
-y  <- rbinom(n, size = 1, prob = stats::plogis(eta))
+## Toy data
+y <- c(0,0,0,0, 1,1,1,1)
+x <- c(-0.52, -0.07, -0.60, -0.67, 1.39, 0.16, 1.40, 0.09)
 df <- data.frame(y = y, x = x)
+
+## 0) Detect Separation
+detect <- DISCO::uni_separation(df, predictor = "x", outcome = "y")
+detect$separation_type # e.g., "Perfect separation"
 
 ## 1) Default: STANDARDIZED coefficients (beta0, beta1)
 fit_std <- EP_univariable(
   data = df, predictor = "x", outcome = "y",
-  n_iter = 6000, burn_in = 2000, seed = 42  # reduced iters for example speed
+  n_iter = 6000, burn_in = 2000, seed = 42
 )
 fit_std$posterior
 
@@ -199,8 +209,15 @@ fit_long <- EP_univariable(
 )
 fit_sas$posterior   # contains beta1_SAS
 fit_long$posterior  # contains beta1_Long
-}
 
+## 4) Shared missing handling
+df2 <- df; df2$x[c(5, 8)] <- NA
+fit_cc <- EP_univariable(df2, "x", "y", missing = "complete",
+                         n_iter = 4000, burn_in = 1500, seed = 9)
+fit_im <- EP_univariable(df2, "x", "y", missing = "impute",
+                         impute_args = list(numeric_method = "median"),
+                         n_iter = 4000, burn_in = 1500, seed = 9)
+}
 }
 \seealso{
 \code{\link[DISCO]{uni_separation}} for severity diagnostics.

@@ -6,7 +6,7 @@
 ---
 
 ## Why separation matters
-When predictors **perfectly** (or almost perfectly) split the outcome, logistic regression can produce **infinite** (or severely inflated) odds ratios and unstable inference. **DISCO** helps you **detect** these cases early and (optionally) **stabilize** estimates with Bayesian priors.
+When predictors **perfectly** (or quasi-completely) split the outcome, logistic regression can produce **infinite** (or severely inflated) odds ratios and unstable inference. **DISCO** helps you **detect** these cases early and **stabilize** estimates with Bayesian priors.
 
 ---
 
@@ -17,19 +17,16 @@ When predictors **perfectly** (or almost perfectly) split the outcome, logistic 
   - Hungarian matching to align clusters,
   - a **vectorized Rand index**,
   - a **non-negative boundary threshold** to guard against boundary ties,
-  - a **continuous severity score** in \[0,1\].
+  - a **continuous severity score** in [0,1].
 - `latent_separation()` — multivariate detector using **LP-based** feasibility with options to:
   - search for **inclusion-minimal** separating subsets (pruning),
   - choose **perfect**, **quasi**, or **either** as “hit” criteria,
   - handle missingness **per subset** (complete-case or imputation).
 
 ### Estimation (Bayesian)
-- `EP_univariable()` — **severity-adaptive univariate** logistic regression with an **Exponential Power (EP)** prior (RW–MH sampler).  
-  **Default output:** standardized coefficients `beta0` and `beta1` (z-scored X working scale).  
-  **Optional back-transform:** set `transform_beta1 = "logit" | "SAS" | "Long"` to add `beta0_orig` and a slope per 1 unit of the **original** predictor.
-- `mep_function()` — **core multi-predictor** logistic sampler with a **Multivariate Exponential Power (MEP)** prior for user-specified \((\mu,\Sigma,\kappa)\). Returns working-scale summaries **with CIs** and back-transformed effects (**A / SAS / Long**, with CIs).
-- `MEP_latent()` — **grid search** over \((\mu,\Sigma,\kappa)\) for multi-predictor models using `mep_function()`; selects one run using an **acceptance-rate window**, **posterior predictive agreement**, and (when available) **GLM coefficient-ratio** closeness. Carries through **CIs** from the selected run.
-- `MEP_mixture()` — **severity-adaptive multi-predictor** logistic with **numeric + factor** predictors. Encodes factors via `model.matrix(~ ., data = X)`, anchors slope prior scales by **per-predictor DISCO severities**, runs a small grid (intercept mean offsets, global slope multipliers, κ), and selects one run via acceptance window + checks. Reports posterior **means** on the standardized scale and back-transformed **A / SAS / Long** **means** per encoded column; also provides GLM/Firth/MEP **ratios**.
+- `EP_univariable()` — DISCO-severity-adaptive **univariate** logistic regression with an **MEP** prior; shared missing handling (applied once), standardized X for **severity & fit**, optional back-transforms (logit / SAS / Long), and a GLM comparator on standardized X.
+- `MEP_latent()` — **unified latent** (numeric **+ factor** support via `model.matrix`): handles missingness **once** on raw `y, X`, encodes factors (treatment; baseline = first level), **safe-scales encoded columns**, runs a small grid over \((\mu, \sigma_{\text{global}}, \kappa)\), and selects one run via acceptance-window + GLM-ratio closeness + posterior predictive agreement. Reports working-scale summaries **with CIs** and back-transformed **b_A / b_SAS / b_Long** **(per encoded column)** with CIs.
+- `MEP_mixture()` — **severity-anchored multi-predictor** logistic with **numeric + factor** predictors. Encodes factors via `model.matrix(~ ., data = X)`, anchors slope prior scales by **per-predictor DISCO severities** (numeric severities computed on z-scores; factors unchanged for severity step), runs a small grid (intercept mean offsets, global slope multipliers, κ), and selects one run via acceptance window + checks. Reports posterior **means** on the standardized scale and optional back-transformed **A / SAS / Long** **means** per encoded column; also provides GLM/Firth/MEP **ratios**.
 
 Planned: odds-ratio deflation after separation detection.
 
@@ -43,7 +40,10 @@ devtools::install_github("bioscinema/DISCO")
 library(DISCO)
 ```
 
+---
+
 ## Separation Diagnosis
+
 ### Quick Start
 
 ```r
@@ -92,12 +92,8 @@ one$missing_info  # rows used, etc.
 
 - `missing = "complete"`: drop rows with **NA** in the tested variables; the **outcome is never imputed**.
 - `missing = "impute"`: **impute predictors only**; outcome NAs are **always dropped**.
-- Every result returns `missing_info` with:
-  - `method` (`"complete"` or `"impute"`)
-  - `params` (imputation settings or `custom_fn`)
-  - `n_used` (number of rows analyzed after the missing-data rule)
-  - `rows_used` (exact **original** row indices included in the fit)
-- In latent (subset) searches, **each subset** has its own `missing_info` (its own `rows_used`/`n_used`) since missingness can differ by variable combination.
+- Every result returns `missing_info` with: `method`, `params`, `n_used`, and the exact `rows_used` (original indices).
+- In latent (subset) searches, **each subset** has its own `missing_info` since missingness can differ by variable combination.
 
 #### Imputation Params (`missing_info$params`)
 A compact summary of per-type rules when `method = "impute"` (e.g., `Numeric=Mean; Categorical=Missing; Logical=Mode`):
@@ -149,7 +145,7 @@ res_cat <- uni_separation(
 res_cat$missing_info$params
 ```
 
-### Pretty tables (gt) — optional
+### Pretty tables (`gt`) — optional
 
 ```r
 # install.packages("gt")
@@ -163,46 +159,12 @@ gt_uni_separation(res_uni_cc, title = "Univariate (X1 vs Y) — Complete-case")
 gt_uni_separation_all(df_miss, outcome = "Y", missing = "complete")
 ```
 
-### Example output
+#### Example output
 
 ![Univariate DISCO table](man/figures/readme-uni-gt-all.png)
 
-This table summarizes univariate screen results of each predictor against the outcome (`Y`) using **complete-case** data. It flags whether any single predictor causes separation in a logistic model.
+> This table summarizes univariate screen results of each predictor against the outcome (`Y`) using **complete-case** data. It flags whether any single predictor causes separation in a logistic model. See the README earlier version for column definitions: Separation Index, Severity, Boundary Threshold, Single-Tie Boundary, Tie Count, Missing-Data Handling block, Separation label, and Rows Used (Original Indices).
 
-- **Predictor / Outcome**  
-  The variable tested and the binary outcome.
-
-- **Indices (block of columns)**
-  - **Separation Index** — scaled 0–1; **1.000 = Perfect Separation**, values near 0 indicate no separation concern.
-  - **Severity** — scaled 0–1 and shown with color; higher = more severe (red), lower = minimal/none (green).
-  - **Boundary Threshold** — the univariate cut that separates classes at the boundary (reported for reference).
-  - **Single-Tie Boundary** — **Yes** if separation hinges on a single boundary case; **No** otherwise.
-  - **Tie Count** — number of tied boundary rows involved in the separating cut.
-
-- **Missing-Data Handling (block of columns)**
-  - **Missing Method** — *Complete* = complete-case analysis.
-  - **Imputation Params** — parameters shown when imputation is used (here they’re placeholders because complete-case was used).
-  - **N Used** — number of subjects actually analyzed after the missing-data rule.
-
-- **Separation**  
-  Text label summarizing the result:
-  - **Perfect Separation** — predictor alone perfectly separates the outcome (MLE will diverge).
-  - **No Problem** — no separation detected.
-
-- **Rows Used (Original Indices)**  
-  Original dataset row numbers included in the analysis for that predictor (not re-indexed after filtering).
-
-- Example
-
-  - **X1** has **Separation Index = 1.000**, **Severity = 1.000**, and is labeled **Perfect Separation** with **N Used = 9**.  
-    → X1 alone perfectly separates `Y` on the complete-case subset (rows `1, 2, 4, 5, 6, 7, 9, 10, 12`). Standard logistic regression MLE will not be finite; consider remedies (e.g., Firth penalization, Bayesian priors, or data/model modifications).
-
-  - **Race, L1, X2** show **Separation Index ≈ 0.57–0.61**, **Severity = 0.000**, and **No Problem**.  
-    → These predictors do **not** induce separation in univariate fits on their respective complete-case samples (N Used = 8–9).
-
-  - All rows used are reported as **original indices**. Since the method is *Complete*, the full list is shown for each predictor.
-
----
 ```r
 # Latent: minimal subsets, complete-case per subset
 res_lat_cc <- latent_separation(
@@ -213,40 +175,10 @@ res_lat_cc <- latent_separation(
 )
 gt_latent_separation(res_lat_cc, title = "Latent Minimal Subsets — Complete-Case")
 ```
+
 ![Latent DISCO table](man/figures/readme-latent-gt-complete.png)
 
-This table summarizes subsets of predictors that yield separation in a **complete-case analysis** (rows with any missing values are excluded). Each row corresponds to one predictor subset.
-
-- **Subset / Variables / # Of Predictors**  
-  The predictor combination evaluated and its size.
-
-- **Missing-Data Handling / Imputation Params / N Used**  
-  The approach to missing data (*Complete* means complete-case) and how many subjects were analyzed for that subset. Imputation parameters are shown when applicable.
-
-- **Separation**  
-  The separation status observed with the listed subjects as used:
-  - **Perfect Separation** — the subset already perfectly separates the outcome.
-  - **Quasi-Complete Separation** — separation is nearly perfect (one side has boundary cases).
-
-- **Removed And Rest Reach Perfect**  
-  A **minimal** set of original row indices that, if dropped, would make the **remaining used** rows achieve **Perfect Separation**.
-  - Empty/blank here means no removal is needed (the subset already has Perfect Separation).
-  - When multiple indices appear, **all** must be removed; removing a strict subset may not suffice.
-
-- **Rows Used (Original Indices)**  
-  The original dataset row numbers included in the complete-case fit for that subset. We always report **original indices** (not re-indexed after filtering).
-
-- Example
-  - **X1_X2, X2_L1, Race_L1, X1_Race, X2_Race**  
-    - **Separation:** Perfect Separation  
-    - **Removed And Rest Reach Perfect:** *(blank)* → already Perfect; no rows need removal.  
-    - **N Used:** 6–7, with original indices listed in the last column.
-
-  - **X1_L1**  
-    - **Separation:** Quasi-Complete Separation  
-    - **Removed And Rest Reach Perfect:** `5`  
-    - **Interpretation:** The complete-case fit used rows `1, 4, 5, 7, 9, 10`. If you drop row **5**, the remaining rows (`1, 4, 7, 9, 10`) would yield **Perfect Separation** for subset `{X1, L1}`.
----
+> Summarizes subsets of predictors that yield separation in a **complete-case analysis**. See the original table notes for interpretation of “Removed And Rest Reach Perfect”, “Rows Used (Original Indices)”, etc.
 
 ```r
 # Latent minimal subsets (imputed)
@@ -259,59 +191,29 @@ res_lat_imp <- latent_separation(
 )
 gt_latent_separation(res_lat_imp, title = "Latent Minimal Subsets — Imputed")
 ```
+
 ![Latent DISCO table](man/figures/readme-latent-gt.png)
 
-This table summarizes subsets of predictors that yield separation in an **imputation analysis**. Each row corresponds to one predictor subset.
-
-- **Subset / Variables / # Of Predictors**  
-  The subset name, which variables it includes, and its size.
-
-- **Missing-Data Handling / Imputation Params / N Used**  
-  - **Missing Method** — *Impute* indicates missing values in predictors were filled according to the listed recipe.  
-  - **Imputation Params** — e.g., `Numeric=Mean; Categorical=Missing; Logical=Mode` means numeric features use mean imputation, categorical features add a literal “Missing” level, and logicals use the mode.  
-  - **N Used** — number of subjects used after applying the imputation rule (can be less than total if the **outcome** is missing for some rows, since outcomes are not imputed).
-
-- **Separation**  
-  The separation status **after imputation** using the rows counted in *N Used*:
-  - **Perfect Separation** — the subset perfectly separates the outcome on the imputed dataset.
-  - **Quasi-Complete Separation** — nearly perfect; boundary cases exist (not shown in this example).
-
-- **Removed And Rest Reach Perfect**  
-  A **minimal** set of original row indices that, *if removed*, would make the **remaining used** rows achieve **Perfect Separation**.  
-  - Blank = already Perfect; no removal needed.  
-  - If multiple indices appear, **all** are required (removing a strict subset may not suffice).
-
-- **Rows Used (Original Indices)**  
-  Original dataset row numbers included in the imputed fit for that subset.  
-  - In **imputed** mode this is hidden by default (shown as “—”) to avoid long lists.  
-  - Set `show_rows_used = TRUE` to preview indices. Indices are always reported in the **original** numbering (not re-indexed after filtering/imputation).
-
-- Example
-  - All listed pairs (e.g., **X1_X2**, **X1_Race**, **X2_Race**, **Race_L1**) achieve **Perfect Separation** under the specified imputation scheme with **N Used = 11**.
-  - **Removed And Rest Reach Perfect** is blank for each row → no removals are needed because separation is already perfect.
-  - **Practical note:** Separation that appears **after imputation** can reflect either genuine structure or an artifact of the imputation rule (e.g., adding a “Missing” level). Consider sensitivity checks (complete-case vs. imputed analyses), penalized likelihood (Firth), or Bayesian priors when fitting logistic models in the presence of separation.
-
----
 ---
 
-## Severity-adaptive Univariate Bayes (EP_univariable)
+## Severity-adaptive Univariate Bayes — `EP_univariable`
 
-`EP_univariable()` fits **intercept + one predictor** logistic regression with a **severity-adaptive EP prior** informed by `uni_separation()`. It uses a random-walk MH sampler with light auto-tuning.
+`EP_univariable()` fits **intercept + one predictor** logistic regression with a **severity-adaptive MEP prior** informed by `uni_separation()`. It uses a random-walk MH sampler with light auto-tuning.
+
+**Shared missing handling (applied once).** We apply `missing` to `(outcome, predictor)` **once**, then use those rows/values for both the DISCO severity and the model fit. For the DISCO call we pass `missing = "complete"` because the data are already prepared. Numeric predictors are z-scored for severity, GLM comparator, and the Bayesian fit; 2-level factors are converted to 0/1 for estimation/comparator (error if >2 levels).
 
 **Defaults (match SLURM script):**
 - `n_iter = 20000`, `burn_in = 5000`
 - Proposal s.d. blend: `step = 0.30*(1-severity) + 0.12*severity`
 - Prior scales: `sigma0 = 10`, `sigma1_hi = 5`, `sigma1_lo = 0.15`
 - Shape blend: `kappa = 1 + severity*(2.5 - 1)`
-- Missing-data handling propagated from `uni_separation()`
+- `ci_level = 0.95`, MH auto-tuning during burn-in (`tune_threshold_hi = 0.45`, `tune_threshold_lo = 0.20`, `tune_interval = 500`)
+- `compare = TRUE` fits a GLM comparator on standardized X
 
-**Output (by default):** standardized coefficients `beta0`, `beta1`  
-*(z-scored X working scale; good for across-predictor comparability)*
-
-**Optional back-transform:** choose one:
-- `transform_beta1 = "logit"` → add `beta0_orig`, `beta1_logit` (per 1 unit of original X)  
-- `transform_beta1 = "SAS"`   → add `beta0_orig`, `beta1_SAS = beta1_logit * π/√3`  
-- `transform_beta1 = "Long"`  → add `beta0_orig`, `beta1_Long = beta1_logit * (π/√3 + 1)`
+**Output**
+- `posterior`: summaries for **standardized** `beta0`, `beta1`; if `transform_beta1 ∈ {logit, SAS, Long}`, also includes `beta0_orig` and the corresponding slope (`beta1_logit` / `beta1_SAS` / `beta1_Long`) on the **original predictor** scale.
+- `disco`: severity metadata (`separation_type`, `severity_score`, `boundary_threshold`, `single_tie_boundary`, `missing_info` including `rows_used`).
+- `prior`, `mcmc` diagnostics, `comparators$glm` (coefficients on standardized X), `rows_used`. If `return_draws = TRUE`, returns `draws$chain_std` / `draws$chain_orig`.
 
 ### Quick start
 
@@ -339,6 +241,14 @@ fit_sas  <- EP_univariable(df, "x", "y", transform_beta1 = "SAS",
                            n_iter = 6000, burn_in = 2000, seed = 42)
 fit_long <- EP_univariable(df, "x", "y", transform_beta1 = "Long",
                            n_iter = 6000, burn_in = 2000, seed = 42)
+
+# (4) Shared missing handling
+df2 <- df; df2$x[c(5, 8)] <- NA
+fit_cc <- EP_univariable(df2, "x", "y", missing = "complete",
+                         n_iter = 4000, burn_in = 1500, seed = 9)
+fit_im <- EP_univariable(df2, "x", "y", missing = "impute",
+                         impute_args = list(numeric_method = "median"),
+                         n_iter = 4000, burn_in = 1500, seed = 9)
 ```
 
 **Interpretation**
@@ -347,13 +257,9 @@ fit_long <- EP_univariable(df, "x", "y", transform_beta1 = "Long",
 - `beta1_SAS = beta1_logit * (π/√3)`; `beta1_Long = beta1_logit * (π/√3 + 1)`.
 - `beta0_orig` aligns the intercept with original X-units.
 
-**Dependencies:** `DISCO` (for severity); `logistf` optional (Firth comparator).
-
 ---
 
-## Bayesian Estimation with MEP (multivariate; posterior means & CIs)
-
-**When to use:** After your screen flags separation risk in multi-predictor settings, fit a logistic model with an MEP prior to stabilize estimation.
+## Bayesian Estimation (multivariate) — CIs & means
 
 ### Core sampler (fixed prior): `mep_function()`
 
@@ -362,7 +268,7 @@ set.seed(1)
 y <- c(0,0,0,0,1,1,1,1)
 X <- cbind(
   X1 = c(-1.86, -0.81,  1.32, -0.40,  0.91,  2.49,  0.34,  0.25),
-  X2 = c( 0.52,  1.07,  0.60,  0.67, -1.39,  0.16, -1.40, -0.09)
+  X2 = c( 0.52, -0.07,  0.60,  0.67, -1.39,  0.16, -1.40, -0.09)
 )
 p <- ncol(X) + 1
 fit <- mep_function(
@@ -370,56 +276,107 @@ fit <- mep_function(
   X_orig = X, y = y, mu = rep(0, p), Sigma = diag(p), kappa = 1,
   scale_X = TRUE, ci_level = 0.95
 )
-
-# Working-space summary (includes Intercept) with CIs
-head(fit$scaled_summary)
-
-# Back-transformed effects with 95% CIs (per predictor; no intercept):
-# Scaled (working/logit), A, SAS, Long
-head(fit$standardized_coefs_back)
+head(fit$scaled_summary)         # working/logit space with CIs
+head(fit$standardized_coefs_back) # A / SAS / Long with CIs
 ```
 
-> Note: The output does **not** include an “M” scale; only **Scaled / A / SAS / Long** are returned.
-
-### Prior grid search (auto-selected run): `MEP_latent()`
-
-```r
-set.seed(1)
-y <- c(0,0,0,0,1,1,1,1)
-X <- cbind(
-  X1 = c(-1.86,-0.81, 1.32,-0.40, 0.91, 2.49, 0.34, 0.25),
-  X2 = c( 0.52,-0.07, 0.60, 0.67,-1.39, 0.16,-1.40,-0.09)
-)
-gs <- MEP_latent(
-  y, X,
-  n_iter = 10000, burn_in = 1000, init_beta = NULL, step_size = 0.4,
-  mu_vals = seq(-1, 1, by = 0.1),
-  Sigma_list = list(diag(ncol(X)+1), diag(ncol(X)+1)*0.1, diag(ncol(X)+1)*0.5,
-                    diag(ncol(X)+1)*2,  diag(ncol(X)+1)*5),
-  kappa_vals = c(0.5, 1, 2),
-  accept_window = c(0.3, 0.4), accept_target = 0.35,
-  scale_X = TRUE, ci_level = 0.95
-)
-
-gs$best_settings        # chosen (mu, Sigma, kappa)
-head(gs$scaled_summary) # working/logit space with CIs
-head(gs$standardized_coefs_back) # A / SAS / Long with CIs
-```
-
-**Selection logic (summary):**
-1. Filter runs by MH acceptance in `accept_window` (fallback to closest to `accept_target`).
-2. Prefer higher `prop_matched` if < 0.90 is observed; else minimize mean absolute difference to a GLM coefficient-ratio reference (on the same scaling).
+> Note: Output includes **Scaled / A / SAS / Long**; no “M” scale.
 
 ---
 
-## Severity-Adaptive MEP for Mixture (numeric + factor predictors): `MEP_mixture()`
+## Unified latent MEP — `MEP_latent()`
+
+Fits a logistic model with a **Multivariate Exponential Power (MEP)** prior via RW–MH and performs a small grid search over prior settings \((\mu, \Sigma, \kappa)\). Predictors are **always z-scored internally** (safe-scaling). Summaries and CIs are reported on the working (logit/standardized) scale and **back-transformed to the original (encoded) predictor scale**.
 
 **What it does**
+- Handles missingness **once** (complete-case or imputation) on the **raw** `X` and `y`, then uses the same rows for both fitting and the GLM reference.
+- **Encodes factors** in `X` with `model.matrix(~ ., data = X)` (treatment contrasts, baseline = first level), drops the intercept, and fits on the **numeric encoded** design.
+- Standardizes encoded predictors with a **safe scaler** (sd set to 1 when sd=0 or non-finite).
+- For each grid setting, runs RW–MH with an EP prior and collects posterior **means**, **credible intervals**, and a posterior predictive **match** statistic.
+- **Selects one run** by: (i) acceptance-rate window, (ii) closeness to a **GLM coefficient-ratio** reference (same standardized working scale), and (iii) posterior predictive agreement.
+
+**Factor handling & encoded names**
+- **Numeric predictors** appear as a single encoded column with their original name (e.g., `X3`).
+- **Factors** expand to treatment-contrast dummies (baseline = first level). For a 2-level factor `G` with levels `A` (baseline) and `B`, the encoded column is `GB` (effect **B vs A**). Change the baseline beforehand with `stats::relevel()`.
+- All reported effects are **per encoded column**.
+
+**Back-transforms (encoded scale)**
+- Let \(s_x\) be the SD of an encoded column (numeric or 0/1 dummy) on the encoded `X` scale, and \(\beta_\text{std}\) the slope in the standardized design. We report:
+  - `b_A_original  = β_std / s_x` (per-unit effect on encoded scale),
+  - `b_SAS_original  = b_A_original * π/√3`,
+  - `b_Long_original = b_A_original * (π/√3 + 1)`.
+  For a 0/1 dummy with prevalence \(p\), \(s_x = \sqrt{p(1-p)}\).
+
+**Returns** (selected run)
+- `best_settings` (`mu`, `Sigma_diag`, `kappa`), `best_acceptance`, `best_prop_matched`.
+- `scaled_summary` (includes Intercept) with `Mean`, `SD`, `CI_low`, `CI_high` on the working scale.
+- `standardized_coefs_back` with **means & CIs** for `Scaled` plus **`b_A_original`**, **`b_SAS_original`**, **`b_Long_original`** **per encoded column**.
+- `Ref_ratio` (GLM ratio string on the same standardization), `results_table`, `rows_used`, `missing_info`.
+
+**Examples**
+
+```r
+## Numeric example
+y <- c(0,0,0,0, 1,1,1,1)
+X <- data.frame(
+  X1 = c(-1.86, -0.81,  1.32, -0.40,  0.91,  2.49,  0.34,  0.25),
+  X2 = c( 0.52,  -0.07,  0.60,  0.67, -1.39,  0.16, -1.40, -0.09)
+)
+
+fit_cc <- MEP_latent(
+  y = y, X = X,
+  n_iter = 10000, burn_in = 1000, step_size = 0.4,
+  mu_vals = seq(-1, 1, by = 0.2),
+  sigma0_intercept = 10,
+  sigma_global_multipliers = c(0.1, 0.5, 1, 2, 5),
+  kappa_vals = c(0.5, 1, 2),
+  missing = "complete",
+  ci_level = 0.95, seed = 42
+)
+fit_cc$best_settings
+head(fit_cc$scaled_summary)
+head(fit_cc$standardized_coefs_back)
+
+## Factor example (treatment coding; baseline = first level)
+Xf <- data.frame(
+  X1 = X$X1,
+  G  = factor(c("A","A","B","B","A","B","A","B"), levels = c("A","B"))
+)
+fit_f <- MEP_latent(
+  y = y, X = Xf,
+  n_iter = 8000, burn_in = 800,
+  mu_vals = seq(-0.5, 0.5, by = 0.25),
+  sigma_global_multipliers = c(0.5, 1, 2),
+  kappa_vals = c(1, 2),
+  missing = "complete", seed = 99
+)
+fit_f$standardized_coefs_back     # contains column "GB" (= B vs A)
+
+## Impute: add an NA to a factor and a numeric column
+Xfi <- Xf; Xfi$X1[1] <- NA; Xfi$G[4] <- NA
+fit_i <- MEP_latent(
+  y = y, X = Xfi,
+  n_iter = 6000, burn_in = 600,
+  mu_vals = seq(-0.5, 0.5, by = 0.25),
+  sigma_global_multipliers = c(0.5, 1, 2),
+  kappa_vals = c(1, 2),
+  missing = "impute",
+  impute_args = list(numeric_method = "median", factor_method = "mode"),
+  seed = 77
+)
+fit_i$rows_used
+head(fit_i$scaled_summary)
+```
+
+---
+
+## Severity-Adaptive MEP for Mixtures — `MEP_mixture()` 
+
 - Encodes `X` via `model.matrix(~ ., data = X)` (intercept dropped for slopes).
-- For each **original** predictor (before encoding), computes a **DISCO severity** (on modeling rows).
-- Maps severity \( s \in [0,1] \) to an **anchor slope prior sd** and **κ** (intercept uses a wide prior).
+- For each **original** predictor (before encoding), computes a **DISCO severity** (on modeling rows). **Numeric predictors are z-scored** for the severity computation (factors unchanged).
+- Maps severity \\( s \\in [0,1] \\) to an **anchor slope prior sd** and **κ** (intercept uses a wide prior).
 - Runs a small grid: **intercept mean offsets**, **global multiplier** on slope prior sds, and **κ** around the anchor average; chooses one run using an **acceptance window**, **posterior predictive agreement**, and (when available) **GLM ratio** closeness relative to a single **reference** predictor.
-- Returns posterior **means** (not CIs) for standardized slopes and back-transforms (**A / SAS / Long**) per **encoded column**; also returns GLM/Firth/MEP **betas & ratios**.
+- Returns posterior **means and CIs** for standardized slopes and, if requested, back-transforms (**logit / SAS / Long**) **means and CIs** per **encoded** column; also returns GLM/MEP **betas & ratios**.
 
 **Factor handling & labels**
 - Treatment contrasts with the **first level as baseline**.
@@ -429,9 +386,9 @@ head(gs$standardized_coefs_back) # A / SAS / Long with CIs
   X$X3 <- stats::relevel(X$X3, ref = "B")
   ```
 
+
 **Example**
 ```r
-set.seed(1)
 y <- c(0,0,0,0, 1,1,1,1)
 X <- data.frame(
   X1 = c(-1.86,-0.81, 1.32,-0.40, 0.91, 2.49, 0.34, 0.25),
@@ -447,18 +404,20 @@ fit <- MEP_mixture(
   sigma_global_multipliers = c(0.1, 0.5, 1, 2, 5, 10),
   accept_window = c(0.30, 0.40),
   accept_target = 0.35,
-  seed = 9, compare = TRUE
+  transform_back = "logit",
+  ci_level = 0.95,
+  seed = 9
 )
 
 fit$ref_predictor       # chosen reference (original predictor index/name)
-fit$posterior$effects   # means for Scaled / b_A_original / b_SAS_original / b_Long_original
+fit$posterior$effects   # Scaled + CI + (b_logit/SAS/Long)_original + CI columns
 fit$ratios$MEP_ratio_std
 ```
 
 **Notes**
-- Standardization/back-transforms use **unscaled encoded** column SDs; for a 0/1 dummy with prevalence \(p\), SD is \(\sqrt{p(1-p)}\).
+- Standardization/back-transforms use **unscaled encoded** column SDs; for a 0/1 dummy with prevalence \\(p\\), SD is \\(\\sqrt{p(1-p)}\\).
 - The **reference predictor** for ratios comes from original `X` (default = highest severity). If a factor, the denominator is its **first dummy**.
-- Outputs for `effects` are **means without CIs** in this version.
+- Naming note: `MEP_latent()` reports `b_A_*` for the per-unit (logit) effect; `MEP_mixture()` uses `b_logit_*`. These are equivalent (A ≡ logit).
 
 ---
 
@@ -492,7 +451,10 @@ latent_separation(
 # Severity-adaptive Univariate Bayes
 EP_univariable(
   data, predictor, outcome = "y",
-  missing = c("complete","impute"), impute_args = list(),
+  missing = c("complete","impute"), impute_args = list(
+    numeric_method = c("median","mean"),
+    factor_method  = c("mode")
+  ),
   n_iter = 20000, burn_in = 5000,
   step_hi = 0.30, step_lo = 0.12,
   ci_level = 0.95, compare = TRUE,
@@ -503,31 +465,26 @@ EP_univariable(
   tune_threshold_hi = 0.45, tune_threshold_lo = 0.20, tune_interval = 500
 )
 
-# Core MEP logistic (fixed prior; returns CIs)
-mep_function(
-  n_iter, init_beta, step_size,
-  X_orig, y, mu, Sigma, kappa,
-  burn_in = 1000,
-  scale_X = TRUE,
-  ci_level = 0.95
-)
-
-# Grid search over (mu, Sigma, kappa); auto-select; returns CIs from the best run
+# Unified latent (numeric + factors): grid over (mu, sigma_global_multipliers, kappa); CIs + back-transforms
 MEP_latent(
   y, X,
-  n_iter = 10000, burn_in = 1000, init_beta = NULL, step_size = 0.4,
+  missing = c("complete","impute"),
+  impute_args = list(),
+  n_iter = 10000, burn_in = 1000, step_size = 0.4,
   mu_vals = seq(-1, 1, by = 0.1),
-  Sigma_list = list(...),
+  sigma0_intercept = 10,
+  sigma_global_multipliers = c(0.1, 0.5, 1, 2, 5, 10),
   kappa_vals = c(0.5, 1, 2),
   accept_window = c(0.3, 0.4), accept_target = 0.35,
-  scale_X = TRUE, ci_level = 0.95
+  ci_level = 0.95, ppc_threshold = 0.80,
+  tune_threshold_hi = 0.45, tune_threshold_lo = 0.20, tune_interval = 500,
+  verbose = FALSE, seed = NULL
 )
 
 # Severity-anchored MEP with factors; grid + selection; returns means (no CIs)
 MEP_mixture(
   y, X,
-  missing = "complete",
-  severity_missing = c("complete","impute"),
+  missing = c("complete","impute"),
   impute_args = list(),
   n_iter_grid = 10000, burn_in_grid = 1000,
   step_size = 0.40,
@@ -538,26 +495,19 @@ MEP_mixture(
   kappa_min = 1, kappa_max = 2.5,
   kappa_delta = seq(-0.5, 0.5, by = 0.2),
   accept_window = c(0.30, 0.40), accept_target = 0.35,
-  ref = NULL, compare = TRUE, seed = 2025,
-  return_draws = FALSE
+  ref = NULL, transform_back = c("none","logit","SAS","Long"),
+  seed = NULL, return_draws = FALSE
 )
 ```
 
 ### Notes & assumptions
 - Outcome is binary and will be normalized to `{0,1}` (supports logical or 2-level factor/character).
 - Categorical predictors are handled directly (univariate) or via dummy encoding (latent / mixture).
-- **MEP_mixture** outputs are per **encoded** column (e.g., `FactorLevel` dummies). Change baselines with `stats::relevel()` to alter dummy interpretation.
-
-### Testing
-
-The package includes unit tests covering:
-- Univariate: no separation / perfect / quasi (numeric & categorical).
-- Latent: no separation / perfect / quasi; minimal-subset search.
-- Missingness: complete-case vs imputation (and custom imputer); rows_used/n_used always reported.
-
-Run tests:
-```r
-devtools::test()
-# or
-testthat::test_dir("tests/testthat")
-```
+- **MEP_latent** and **MEP_mixture** outputs are per **encoded** column (e.g., `FactorLevel` dummies) **with CIs**.
+- Change baselines with `stats::relevel()` to alter dummy interpretation.
+- Testing covers: univariate & latent separation cases, minimal-subset search, and missingness modes (complete-case vs imputation). Use:
+  ```r
+  devtools::test()
+  # or
+  testthat::test_dir("tests/testthat")
+  ```

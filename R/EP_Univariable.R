@@ -22,11 +22,16 @@
 #' @param data A data.frame containing \code{outcome} and \code{predictor}.
 #' @param predictor String; name of the predictor column.
 #' @param outcome String; name of the binary outcome column (default \code{"y"}).
-#' @param missing How to handle missing data: \code{"complete"} (drop rows with any
-#'   NA in \code{predictor} or \code{outcome}) or \code{"impute"} (impute the
-#'   predictor only; outcome NA is always dropped). Default \code{"complete"}.
-#' @param impute_args Optional list of imputation settings passed to
-#'   \code{DISCO::uni_separation()} (e.g., \code{list(numeric_method="median")}).
+#' @param missing How to handle missing data (applied \emph{once}, shared by severity
+#'   and estimation): \code{"complete"} (drop rows with any NA in
+#'   \code{predictor} or \code{outcome}) or \code{"impute"} (drop rows with NA in
+#'   \code{outcome}, and impute \code{predictor} only). Default \code{"complete"}.
+#' @param impute_args Optional list of imputation settings used only when
+#'   \code{missing = "impute"}:
+#'   \itemize{
+#'     \item \code{numeric_method = "median"|"mean"} (default \code{"median"})
+#'     \item \code{factor_method = "mode"} (default \code{"mode"})
+#'   }
 #'
 #' @param n_iter Integer; total MCMC iterations (including burn-in).
 #'   Default \code{20000}.
@@ -36,11 +41,11 @@
 #'   \code{step = step_hi*(1 - severity) + step_lo*severity}.
 #'   Defaults \code{0.30} and \code{0.12}.
 #' @param ci_level Credible interval level in (0,1). Default \code{0.95}.
-#' @param compare Logical; if \code{TRUE} (default) fit GLM and Firth logistic
-#'   (\pkg{logistf}) on the same rows for reference.
+#' @param compare Logical; if \code{TRUE} (default) fit a GLM comparator on the same rows
+#'   \emph{with standardized X} for reference.
 #' @param return_draws Logical; if \code{TRUE}, include posterior draws on
 #'   standardized and original scales. Default \code{FALSE}.
-#' @param seed For reproducibility, default 2025.
+#' @param seed Optional integer; if provided, sets RNG seed for reproducibility.
 #'
 #' @param transform_beta1 One of \code{"none"}, \code{"logit"}, \code{"SAS"}, \code{"Long"}.
 #'   If not \code{"none"}, also reports \code{beta0_orig} and the chosen slope on the
@@ -74,14 +79,28 @@
 #'         \code{beta0}, \code{beta1} (standardized) and, if requested via
 #'         \code{transform_beta1}, \code{beta0_orig} plus one of
 #'         \code{beta1_logit}/\code{beta1_SAS}/\code{beta1_Long}.
-#'   \item \code{comparators}: list with \code{glm} and \code{firth} coefficient
-#'         vectors when available.
+#'   \item \code{comparators}: list with a \code{glm} coefficient vector (fit on standardized X)
+#'         when available.
 #'   \item \code{rows_used}: integer indices of rows used after missing handling.
 #'   \item \code{draws} (optional): list with \code{chain_std} and \code{chain_orig}
 #'         (included when \code{return_draws = TRUE}).
 #' }
 #'
 #' @details
+#' \strong{Shared missing handling.}
+#' The \code{missing} choice is applied once to \code{(data[[outcome]], data[[predictor]])}.
+#' With \code{missing = "complete"} we drop rows with any NA in those two columns.
+#' With \code{missing = "impute"} we drop rows with NA in the outcome, then impute
+#' NAs in the predictor using \code{impute_args}. The resulting rows/values are used
+#' for both the DISCO severity and the model fit. We call
+#' \code{DISCO::uni_separation(..., missing = "complete")} on the already-prepared data.
+#'
+#' \strong{Scaling for consistency.}
+#' Numeric predictors are z-scored (\emph{standardized}) for: (i) the Bayesian fit,
+#' (ii) the GLM comparator, and (iii) the DISCO severity computation.
+#' Factors are left unchanged in the severity step; for estimation/comparators a
+#' 2-level factor is converted to a 0/1 indicator (error if >2 levels).
+#'
 #' \strong{Adaptive prior from severity.}
 #' Let \eqn{\bar{y}} be the sample mean on the analyzed rows and \eqn{s_x} the
 #' predictor SD (on those rows). The MEP prior on \eqn{(\beta_0,\beta_1)} (working,
@@ -103,35 +122,28 @@
 #' adapted every \code{tune_interval} iterations to aim for an acceptance rate
 #' between \code{tune_threshold_lo} and \code{tune_threshold_hi}.
 #'
-#' @section Interpretation:
-#' \itemize{
-#'   \item \code{beta1} (default) — change in log-odds per 1 SD increase in the predictor (standardized scale).
-#'   \item \code{beta1_logit} — change in log-odds per 1 unit increase in the original predictor.
-#'   \item \code{beta1_SAS} and \code{beta1_Long} — alternative effect scalings derived from \code{beta1_logit}.
-#'   \item \code{beta0_orig} is the intercept consistent with original predictor units.
-#' }
-#'
 #' @seealso
 #' \code{\link[DISCO]{uni_separation}} for severity diagnostics.
 #'
 #' @importFrom DISCO uni_separation
-#' @importFrom stats qlogis plogis quantile sd glm binomial coef
+#' @importFrom stats qlogis plogis quantile sd glm binomial coef median
 #' @export
 #'
 #' @examples
 #' \donttest{
-#' ## Toy data: y ~ Bernoulli(logit^{-1}(-0.2 + 1.0 * x)) on ORIGINAL x units
-#' set.seed(1)
-#' n  <- 60
-#' x  <- rnorm(n, mean = 0.3, sd = 1)
-#' eta <- -0.2 + 1.0 * x
-#' y  <- rbinom(n, size = 1, prob = stats::plogis(eta))
+#' ## Toy data
+#' y <- c(0,0,0,0, 1,1,1,1)
+#' x <- c(-0.52, -0.07, -0.60, -0.67, 1.39, 0.16, 1.40, 0.09)
 #' df <- data.frame(y = y, x = x)
+#'
+#' ## 0) Detect Separation
+#' detect <- DISCO::uni_separation(df, predictor = "x", outcome = "y")
+#' detect$separation_type # e.g., "Perfect separation"
 #'
 #' ## 1) Default: STANDARDIZED coefficients (beta0, beta1)
 #' fit_std <- EP_univariable(
 #'   data = df, predictor = "x", outcome = "y",
-#'   n_iter = 6000, burn_in = 2000, seed = 42  # reduced iters for example speed
+#'   n_iter = 6000, burn_in = 2000, seed = 42
 #' )
 #' fit_std$posterior
 #'
@@ -156,8 +168,15 @@
 #' )
 #' fit_sas$posterior   # contains beta1_SAS
 #' fit_long$posterior  # contains beta1_Long
-#' }
 #'
+#' ## 4) Shared missing handling
+#' df2 <- df; df2$x[c(5, 8)] <- NA
+#' fit_cc <- EP_univariable(df2, "x", "y", missing = "complete",
+#'                          n_iter = 4000, burn_in = 1500, seed = 9)
+#' fit_im <- EP_univariable(df2, "x", "y", missing = "impute",
+#'                          impute_args = list(numeric_method = "median"),
+#'                          n_iter = 4000, burn_in = 1500, seed = 9)
+#' }
 EP_univariable <- function(
     data,
     predictor,
@@ -171,10 +190,10 @@ EP_univariable <- function(
     ci_level = 0.95,
     compare = TRUE,
     return_draws = FALSE,
-    seed = 2025,
+    seed = NULL,
     # back-transform choice for beta1 (and corresponding intercept)
     transform_beta1 = c("none","logit","SAS","Long"),
-    # prior defaults (aligned with your SLURM script)
+    # prior defaults
     sigma0 = 10,
     sigma1_hi = 5,
     sigma1_lo = 0.15,
@@ -185,6 +204,36 @@ EP_univariable <- function(
     tune_threshold_lo = 0.20,
     tune_interval = 500
 ) {
+  # --- helpers ----------------------------------------------------------------
+  `%||%` <- function(a, b) if (!is.null(a)) a else b
+  impute_vec <- function(v, args) {
+    if (is.numeric(v)) {
+      if (anyNA(v)) {
+        method <- tolower(args$numeric_method %||% "median")
+        fill <- if (identical(method, "mean")) mean(v, na.rm = TRUE) else stats::median(v, na.rm = TRUE)
+        if (!is.finite(fill)) fill <- 0
+        v[is.na(v)] <- fill
+      }
+      v
+    } else if (is.factor(v) || is.character(v) || is.logical(v)) {
+      v <- as.factor(v)
+      if (anyNA(v)) {
+        tab <- table(v, useNA = "no")
+        if (length(tab)) {
+          lvl <- names(tab)[which.max(tab)]
+          v[is.na(v)] <- factor(lvl, levels = levels(v))
+        } else {
+          v <- factor(v, levels = c(levels(v), "Missing"))
+          v[is.na(v)] <- "Missing"
+        }
+      }
+      v
+    } else {
+      v[is.na(v)] <- 0
+      v
+    }
+  }
+
   missing <- match.arg(missing)
   transform_beta1 <- match.arg(transform_beta1)
 
@@ -194,44 +243,48 @@ EP_univariable <- function(
   if (!is.null(seed)) set.seed(as.integer(seed))
   if (n_iter <= burn_in) stop("`n_iter` must be greater than `burn_in`.", call. = FALSE)
 
-  # --- 1) DISCO severity + rows used -----------------------------------------
-  res_disco <- DISCO::uni_separation(
-    data = data, predictor = predictor, outcome = outcome,
-    missing = missing, impute_args = impute_args
-  )
-  rows_used <- res_disco$missing_info$rows_used
-  if (is.null(rows_used) || length(rows_used) == 0) {
-    stop("No rows available after missing-data handling.", call. = FALSE)
+  # --- 1) Shared missing handling (applied once) ------------------------------
+  y_full <- data[[outcome]]
+  x_full <- data[[predictor]]
+
+  if (missing == "complete") {
+    keep_idx <- which(!is.na(y_full) & !is.na(x_full))
+    if (!length(keep_idx)) stop("No complete cases for outcome & predictor.", call. = FALSE)
+    y <- y_full[keep_idx]; x <- x_full[keep_idx]
+  } else { # "impute"
+    keep_idx <- which(!is.na(y_full))
+    if (!length(keep_idx)) stop("No rows with observed outcome.", call. = FALSE)
+    y <- y_full[keep_idx]; x <- x_full[keep_idx]
+    if (anyNA(x)) x <- impute_vec(x, impute_args)
   }
 
-  df_used <- data[rows_used, , drop = FALSE]
-  y <- df_used[[outcome]]
-  x <- df_used[[predictor]]
-
-  # Normalize outcome to {0,1}
+  # Normalize y to {0,1}
   if (is.logical(y)) y <- as.integer(y)
   if (is.factor(y) || is.character(y)) y <- as.integer(factor(y)) - 1L
   y <- as.numeric(y)
-  # Coerce predictor to numeric if needed
-  if (!is.numeric(x)) x <- as.numeric(x)
+  if (length(unique(y)) < 2L) stop("Outcome must contain both 0 and 1 after missing handling.", call. = FALSE)
 
-  if (length(unique(y)) < 2L) {
-    return(list(
-      predictor = predictor,
-      outcome   = outcome,
-      disco = list(
-        separation_type = res_disco$separation_type,
-        severity_score  = res_disco$severity_score,
-        boundary_threshold = res_disco$boundary_threshold,
-        single_tie_boundary = res_disco$single_tie_boundary,
-        missing_info    = res_disco$missing_info
-      ),
-      message = "Fewer than two outcome classes after missing-data handling; model not fit.",
-      rows_used = rows_used
-    ))
+  # Predictor for estimation: numeric vector (standardized later)
+  # If factor with 2 levels -> 0/1; if >2 levels -> error
+  if (!is.numeric(x)) {
+    if (is.factor(x) || is.character(x) || is.logical(x)) {
+      x <- as.factor(x)
+      if (nlevels(x) != 2L) stop("Predictor has >2 levels; EP_univariable handles numeric or 2-level factors.", call. = FALSE)
+      x <- as.integer(x) - 1L
+    } else {
+      x <- as.numeric(x)
+    }
   }
 
-  # --- 2) Standardize predictor ----------------------------------------------
+  # --- 2) DISCO severity on the same rows; numeric predictor scaled -----------
+  x_for_disco <- if (is.numeric(x)) as.numeric(scale(x)) else x
+  res_disco <- DISCO::uni_separation(
+    data = data.frame(y = y, x = x_for_disco),
+    predictor = "x", outcome = "y",
+    missing = "complete"  # already handled outside
+  )
+
+  # --- 3) Standardize predictor for Bayesian and GLM comparator ---------------
   X_std <- scale(x)
   x_mean <- as.numeric(attr(X_std, "scaled:center"))
   x_sd   <- as.numeric(attr(X_std, "scaled:scale"))
@@ -244,20 +297,17 @@ EP_univariable <- function(
         severity_score  = res_disco$severity_score,
         boundary_threshold = res_disco$boundary_threshold,
         single_tie_boundary = res_disco$single_tie_boundary,
-        missing_info    = res_disco$missing_info
+        missing_info    = list(rows_used = keep_idx, policy = missing, imputed = (missing == "impute"))
       ),
       message = "Predictor has zero variance after missing-data handling; model not fit.",
-      rows_used = rows_used
+      rows_used = keep_idx
     ))
   }
 
-  # --- 3) Adaptive prior from severity ----------------------------------------
-  severity <- res_disco$severity_score
-  if (is.null(severity) || is.na(severity)) severity <- 0
+  # --- 4) Adaptive prior from severity ----------------------------------------
+  severity <- res_disco$severity_score; if (is.null(severity) || is.na(severity)) severity <- 0
   y_bar <- mean(y)
-
   logit_clip <- function(p) stats::qlogis(pmin(pmax(p, 1e-6), 1 - 1e-6))
-
   prior_from_severity <- function(severity_score, y_bar,
                                   sigma0, sigma1_hi, sigma1_lo,
                                   kappa_min, kappa_max) {
@@ -270,16 +320,13 @@ EP_univariable <- function(
     list(mu = mu, Sigma = Sigma, kappa = kappa,
          sigma0 = sigma0, sigma1 = sigma1)
   }
-
-  pr <- prior_from_severity(severity, y_bar,
-                            sigma0 = sigma0, sigma1_hi = sigma1_hi, sigma1_lo = sigma1_lo,
-                            kappa_min = kappa_min, kappa_max = kappa_max)
+  pr <- prior_from_severity(severity, y_bar, sigma0, sigma1_hi, sigma1_lo, kappa_min, kappa_max)
   mu <- pr$mu; Sigma <- pr$Sigma; kappa <- pr$kappa
 
-  # Proposal step blended by severity (milder → larger step)
+  # Proposal step blended by severity
   step_size <- step_hi * (1 - severity) + step_lo * severity
 
-  # --- 4) RW–MH sampler (intercept + standardized slope) ----------------------
+  # --- 5) RW–MH sampler (intercept + standardized slope) ----------------------
   run_MH_sampler_uni <- function(n_iter, init_beta, step_size, X_std, y, mu, Sigma, kappa, burn_in,
                                  tune_hi, tune_lo, tune_interval) {
     X <- cbind(Intercept = 1, X_std); p <- ncol(X)
@@ -330,9 +377,7 @@ EP_univariable <- function(
   chain_std <- fit$chain
   acc_rate  <- fit$acceptance_rate
 
-  # --- 5) Back-transform to original predictor scale --------------------------
-  # beta1_logit = b1_std / s_x ;  beta0_orig = b0_std - b1_std * (mean_x / s_x)
-  # SAS/Long are scalar multiples of beta1_logit
+  # --- 6) Back-transform to original predictor scale --------------------------
   transform_chain_to_original <- function(chain_std, x_mean, x_sd) {
     b0_std <- chain_std[, 1]
     b1_std <- chain_std[, 2]
@@ -348,57 +393,47 @@ EP_univariable <- function(
   }
   chain_orig <- transform_chain_to_original(chain_std, x_mean, x_sd)
 
-  # --- 6) Posterior summaries --------------------------------------------------
+  # --- 7) Posterior summaries --------------------------------------------------
   qlo <- (1 - ci_level) / 2; qhi <- 1 - qlo
   summ_one <- function(v) {
     c(Mean = mean(v), SD = stats::sd(v),
       CI_low = as.numeric(stats::quantile(v, qlo)),
       CI_high = as.numeric(stats::quantile(v, qhi)))
   }
-
-  # Always include standardized coefficients as beta0, beta1
-  rows <- list(
-    beta0 = chain_std[, 1],
-    beta1 = chain_std[, 2]
-  )
-
-  # Optionally add the original-scale intercept and the chosen slope scale
+  rows_out <- list(beta0 = chain_std[, 1], beta1 = chain_std[, 2])
   if (transform_beta1 != "none") {
-    rows$beta0_orig <- chain_orig[, "beta0_orig"]
+    rows_out$beta0_orig <- chain_orig[, "beta0_orig"]
     if (transform_beta1 == "logit") {
-      rows$beta1_logit <- chain_orig[, "beta1_logit"]
+      rows_out$beta1_logit <- chain_orig[, "beta1_logit"]
     } else if (transform_beta1 == "SAS") {
-      rows$beta1_SAS <- chain_orig[, "beta1_SAS"]
+      rows_out$beta1_SAS <- chain_orig[, "beta1_SAS"]
     } else if (transform_beta1 == "Long") {
-      rows$beta1_Long <- chain_orig[, "beta1_Long"]
+      rows_out$beta1_Long <- chain_orig[, "beta1_Long"]
     }
   }
-
-  posterior <- do.call(rbind, lapply(names(rows), function(nm) {
-    z <- summ_one(rows[[nm]])
+  posterior <- do.call(rbind, lapply(names(rows_out), function(nm) {
+    z <- summ_one(rows_out[[nm]])
     data.frame(Param = nm, t(z), row.names = NULL, check.names = FALSE)
   }))
 
-  # --- 7) Frequentist comparators (optional) ----------------------------------
-  comparators <- list(glm = NULL, firth = NULL)
+  # --- 8) GLM comparator (standardized X) -------------------------------------
+  comparators <- list(glm = NULL)
   if (isTRUE(compare)) {
-    df_fit <- data.frame(y = y, X = as.numeric(x))
+    df_fit <- data.frame(y = y, X = as.numeric(X_std))
     glm_fit <- try(suppressWarnings(stats::glm(y ~ X, data = df_fit, family = stats::binomial())), silent = TRUE)
     if (!inherits(glm_fit, "try-error")) comparators$glm <- stats::coef(glm_fit)
-    firth_fit <- try(logistf::logistf(y ~ X, data = df_fit), silent = TRUE)
-    if (!inherits(firth_fit, "try-error")) comparators$firth <- stats::coef(firth_fit)
   }
 
-  # --- 8) Assemble and return --------------------------------------------------
+  # --- 9) Assemble and return --------------------------------------------------
   out <- list(
     predictor = predictor,
     outcome   = outcome,
     disco = list(
       separation_type = res_disco$separation_type,
-      severity_score  = severity,
+      severity_score  = res_disco$severity_score,
       boundary_threshold = res_disco$boundary_threshold,
       single_tie_boundary = res_disco$single_tie_boundary,
-      missing_info    = res_disco$missing_info
+      missing_info    = list(rows_used = keep_idx, policy = missing, imputed = (missing == "impute"))
     ),
     prior = list(mu = mu, Sigma = Sigma, kappa = kappa,
                  sigma0 = pr$sigma0, sigma1 = pr$sigma1),
@@ -406,7 +441,7 @@ EP_univariable <- function(
                  n_iter = n_iter, burn_in = burn_in),
     posterior = posterior,
     comparators = comparators,
-    rows_used = rows_used
+    rows_used = keep_idx
   )
   if (isTRUE(return_draws)) out$draws <- list(chain_std = chain_std, chain_orig = chain_orig)
   out
