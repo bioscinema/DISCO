@@ -461,7 +461,7 @@ EP_univariable(
   tune_threshold_hi = 0.45, tune_threshold_lo = 0.20, tune_interval = 500
 )
 
-# Unified latent (numeric + factors): grid over (mu, sigma_global_multipliers, kappa); CIs + back-transforms
+# Unified latent
 MEP_latent(
   y, X,
   missing = c("complete","impute"),
@@ -477,7 +477,7 @@ MEP_latent(
   verbose = FALSE, seed = NULL
 )
 
-# Severity-anchored MEP with factors; grid + selection; returns means (no CIs)
+# Hybrid Situation
 MEP_mixture(
   y, X,
   missing = c("complete","impute"),
