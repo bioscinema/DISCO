@@ -26,9 +26,7 @@ When predictors **perfectly** (or quasi-completely) split the outcome, logistic 
 ### Estimation (Bayesian)
 - `EP_univariable()` — DISCO-severity-adaptive **univariate** logistic regression with an **MEP** prior; shared missing handling (applied once), standardized X for **severity & fit**, optional back-transforms (logit / SAS / Long), and a GLM comparator on standardized X.
 - `MEP_latent()` — **unified latent** (numeric **+ factor** support via `model.matrix`): handles missingness **once** on raw `y, X`, encodes factors (treatment; baseline = first level), **safe-scales encoded columns**, runs a small grid over \((\mu, \sigma_{\text{global}}, \kappa)\), and selects one run via acceptance-window + GLM-ratio closeness + posterior predictive agreement. Reports working-scale summaries **with CIs** and back-transformed **b_A / b_SAS / b_Long** **(per encoded column)** with CIs.
-- `MEP_mixture()` — **severity-anchored multi-predictor** logistic with **numeric + factor** predictors. Encodes factors via `model.matrix(~ ., data = X)`, anchors slope prior scales by **per-predictor DISCO severities** (numeric severities computed on z-scores; factors unchanged for severity step), runs a small grid (intercept mean offsets, global slope multipliers, κ), and selects one run via acceptance window + checks. Reports posterior **means** on the standardized scale and optional back-transformed **A / SAS / Long** **means** per encoded column; also provides GLM/Firth/MEP **ratios**.
-
-Planned: odds-ratio deflation after separation detection.
+- `MEP_mixture()` — **severity-anchored multi-predictor** logistic with **numeric + factor** predictors. Encodes factors via `model.matrix(~ ., data = X)`, anchors slope prior scales by **per-predictor DISCO severities** (numeric severities computed on z-scores; factors unchanged for severity step), runs a small grid (intercept mean offsets, global slope multipliers, κ), and selects one run via acceptance window + checks. Reports posterior **means** on the standardized scale and optional back-transformed **A / SAS / Long** **means** per encoded column.
 
 ---
 
@@ -311,7 +309,6 @@ Fits a logistic model with a **Multivariate Exponential Power (MEP)** prior via 
 - `best_settings` (`mu`, `Sigma_diag`, `kappa`), `best_acceptance`, `best_prop_matched`.
 - `scaled_summary` (includes Intercept) with `Mean`, `SD`, `CI_low`, `CI_high` on the working scale.
 - `standardized_coefs_back` with **means & CIs** for `Scaled` plus **`b_A_original`**, **`b_SAS_original`**, **`b_Long_original`** **per encoded column**.
-- `Ref_ratio` (GLM ratio string on the same standardization), `results_table`, `rows_used`, `missing_info`.
 
 **Examples**
 
@@ -376,7 +373,7 @@ head(fit_i$scaled_summary)
 - For each **original** predictor (before encoding), computes a **DISCO severity** (on modeling rows). **Numeric predictors are z-scored** for the severity computation (factors unchanged).
 - Maps severity \\( s \\in [0,1] \\) to an **anchor slope prior sd** and **κ** (intercept uses a wide prior).
 - Runs a small grid: **intercept mean offsets**, **global multiplier** on slope prior sds, and **κ** around the anchor average; chooses one run using an **acceptance window**, **posterior predictive agreement**, and (when available) **GLM ratio** closeness relative to a single **reference** predictor.
-- Returns posterior **means and CIs** for standardized slopes and, if requested, back-transforms (**logit / SAS / Long**) **means and CIs** per **encoded** column; also returns GLM/MEP **betas & ratios**.
+- Returns posterior **means and CIs** for standardized slopes and, if requested, back-transforms (**logit / SAS / Long**) **means and CIs** per **encoded** column.
 
 **Factor handling & labels**
 - Treatment contrasts with the **first level as baseline**.
@@ -411,7 +408,6 @@ fit <- MEP_mixture(
 
 fit$ref_predictor       # chosen reference (original predictor index/name)
 fit$posterior$effects   # Scaled + CI + (b_logit/SAS/Long)_original + CI columns
-fit$ratios$MEP_ratio_std
 ```
 
 **Notes**
