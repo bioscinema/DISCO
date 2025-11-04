@@ -115,14 +115,6 @@
 #'                 `b_SAS_original`/`b_SAS_CI_low`/`b_SAS_CI_high` *or*
 #'                 `b_Long_original`/`b_Long_CI_low`/`b_Long_CI_high`.
 #'         }
-#'   \item `ratios`: list with
-#'         \itemize{
-#'           \item `GLM_beta`, `GLM_ratio` (standardized encoded design),
-#'           \item `MEP_beta_std`, `MEP_ratio_std`,
-#'           \item and **if** `transform_back != "none"`:
-#'                 `MEP_beta_b_<SCALE>_original` and `MEP_ratio_b_<SCALE>_original`
-#'                 for the chosen `<SCALE>` in {`logit`,`SAS`,`Long`}.
-#'         }
 #'   \item `draws`: matrix of MH draws after burn-in for the selected run
 #'         (returned only when `return_draws = TRUE`).
 #' }
@@ -239,9 +231,6 @@
 #' fit$severity
 #' head(fit$grid_summary)
 #' fit$best
-#' names(fit$ratios)                 # includes GLM & MEP ratios
-#' fit$ratios$GLM_ratio
-#' fit$ratios$MEP_ratio_std
 #' }
 #' @export
 MEP_mixture <- function(
@@ -599,20 +588,20 @@ MEP_mixture <- function(
   # outputs
   effects <- best_run$effects
   pm      <- best_run$pm
-  safe_div <- function(num, den) ifelse(is.finite(den) & abs(den) > 1e-12, num / den, NA_real_)
+  #safe_div <- function(num, den) ifelse(is.finite(den) & abs(den) > 1e-12, num / den, NA_real_)
 
   glm_beta <- glm_coef[-1]
-  glm_ratio <- safe_div(glm_beta, glm_beta[ref_enc_cols[1]])
+  #glm_ratio <- safe_div(glm_beta, glm_beta[ref_enc_cols[1]])
 
   mep_beta_std <- pm[-1]
-  mep_ratio_std <- safe_div(mep_beta_std, mep_beta_std[ref_enc_cols[1]])
+  #mep_ratio_std <- safe_div(mep_beta_std, mep_beta_std[ref_enc_cols[1]])
 
-  ratios_list <- list(
-    GLM_beta = glm_beta,
-    GLM_ratio = glm_ratio,
-    MEP_beta_std = mep_beta_std,
-    MEP_ratio_std = mep_ratio_std
-  )
+  #ratios_list <- list(
+   # GLM_beta = glm_beta,
+   # GLM_ratio = glm_ratio,
+   # MEP_beta_std = mep_beta_std,
+  #  MEP_ratio_std = mep_ratio_std
+  #)
 
   if (transform_back != "none") {
     bt_vec <- best_run$bt[[transform_back]]
@@ -621,8 +610,8 @@ MEP_mixture <- function(
     ratio_name <- paste0("MEP_ratio_b_", transform_back, "_original")
     denom_name <- colnames(X_mm)[ref_enc_cols[1]]
 
-    ratios_list[[beta_name]]  <- bt_vec
-    ratios_list[[ratio_name]] <- safe_div(bt_vec, bt_vec[denom_name])
+    #ratios_list[[beta_name]]  <- bt_vec
+    #ratios_list[[ratio_name]] <- safe_div(bt_vec, bt_vec[denom_name])
   }
 
   list(
@@ -641,7 +630,7 @@ MEP_mixture <- function(
       means_std = pm,
       effects = effects
     ),
-    ratios = ratios_list,
+    #ratios = ratios_list,
     draws = if (isTRUE(return_draws)) best_run$chain else NULL
   )
 }

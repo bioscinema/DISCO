@@ -115,14 +115,6 @@ plus \strong{one optional trio} depending on \code{transform_back}:
 \code{b_SAS_original}/\code{b_SAS_CI_low}/\code{b_SAS_CI_high} \emph{or}
 \code{b_Long_original}/\code{b_Long_CI_low}/\code{b_Long_CI_high}.
 }
-\item \code{ratios}: list with
-\itemize{
-\item \code{GLM_beta}, \code{GLM_ratio} (standardized encoded design),
-\item \code{MEP_beta_std}, \code{MEP_ratio_std},
-\item and \strong{if} \code{transform_back != "none"}:
-\verb{MEP_beta_b_<SCALE>_original} and \verb{MEP_ratio_b_<SCALE>_original}
-for the chosen \verb{<SCALE>} in {\code{logit},\code{SAS},\code{Long}}.
-}
 \item \code{draws}: matrix of MH draws after burn-in for the selected run
 (returned only when \code{return_draws = TRUE}).
 }
@@ -287,9 +279,6 @@ fit <- fit_logit
 fit$severity
 head(fit$grid_summary)
 fit$best
-names(fit$ratios)                 # includes GLM & MEP ratios
-fit$ratios$GLM_ratio
-fit$ratios$MEP_ratio_std
 }
 }
 \seealso{
