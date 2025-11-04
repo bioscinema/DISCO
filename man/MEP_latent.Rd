@@ -108,8 +108,6 @@ and back-transformed effects on
 \item \code{scaled_summary}: data.frame (including Intercept) with columns
 \code{Mean}, \code{SD}, \code{CI_low}, \code{CI_high} in the working
 (logit/standardized) space.
-\item \code{Ref_ratio}: GLM reference coefficient-ratio string computed on the same standardized scaling (if available).
-\item \code{results_table}: data.frame summarizing all grid runs (acceptance, ratios, etc.).
 \item \code{ci_level}: credible interval level used.
 \item \code{rows_used}: integer indices of rows kept after missing handling.
 \item \code{missing_info}: list with \code{policy} and \code{imputed} flags.
