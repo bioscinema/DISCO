@@ -86,34 +86,102 @@ latent_separation <- function(
       X1_mm <- scale(X1_mm)
     }
 
-    out <- .check_sep(y1, X1_mm, mode = mode_local)
-    out$missing_info <- list(
-      method = mh$params_used$method,
-      params = mh$params_used,
-      rows_used = mh$rows_used,
-      n_used = length(mh$rows_used)
+    # Evaluate both, then filter by mode (strict quasi semantics)
+    chk <- .check_sep_both(y1, X1_mm, epsilon = epsilon)
+
+    is_hit <- switch(mode_local,
+                     "perfect" = chk$perfect,
+                     "quasi"   = (chk$quasi && !chk$perfect),  # STRICT quasi-only
+                     "either"  = (chk$perfect || chk$quasi)
     )
-    out
+
+    if (!is_hit) {
+      return(list(
+        hit = FALSE,
+        type = "no separation problem",
+        removed = NULL,
+        diagnostics = chk,
+        missing_info = list(
+          method = mh$params_used$method,
+          params = mh$params_used,
+          rows_used = mh$rows_used,
+          n_used = length(mh$rows_used)
+        )
+      ))
+    }
+
+    out_type <- if (chk$perfect) "perfect separation" else "quasi-complete separation"
+    list(
+      hit = TRUE,
+      type = out_type,
+      removed = if (chk$perfect) NULL else chk$removed,
+      diagnostics = chk,
+      missing_info = list(
+        method = mh$params_used$method,
+        params = mh$params_used,
+        rows_used = mh$rows_used,
+        n_used = length(mh$rows_used)
+      )
+    )
   }
+
+  #   out <- .check_sep(y1, X1_mm, mode = mode_local)
+  #   out$missing_info <- list(
+  #     method = mh$params_used$method,
+  #     params = mh$params_used,
+  #     rows_used = mh$rows_used,
+  #     n_used = length(mh$rows_used)
+  #   )
+  #   out
+  # }
 
   # === No search: single set check (back-compat path) ===========================
   if (!test_combinations && !find_minimal) {
     cols_all <- seq_len(p)
     res <- run_one(cols_all, if (only_perfect) "perfect" else mode)
-    if (res$hit) {
+
+    # If requested mode is unsatisfied but some other type exists, say so
+    if (!isTRUE(res$hit)) {
+      available <- character(0)
+      if (isTRUE(res$diagnostics$perfect)) available <- c(available, "perfect")
+      if (isTRUE(res$diagnostics$quasi))   available <- c(available, "quasi")
+
+      if (length(available)) {
+        return(list(
+          type = "no separation (requested mode unsatisfied)",
+          satisfied = FALSE,
+          available_types = available,
+          removed = NULL,
+          message = sprintf(
+            "Separation exists (%s), but it does not satisfy mode = \"%s\".",
+            paste(available, collapse = " & "),
+            if (isTRUE(only_perfect)) "perfect" else mode
+          ),
+          missing_info = res$missing_info
+        ))
+      }
+
       return(list(
-        type = res$type, removed = res$removed,
-        message = if (identical(res$type, "perfect separation"))
-          "Perfect separation found on the given predictors."
-        else
-          sprintf("Quasi-complete separation: removing any of {%s} yields perfect.",
-                  paste(res$removed, collapse = ", ")),
+        type = "no separation problem",
+        satisfied = FALSE,
+        available_types = character(0),
+        message = "No separation problem detected.",
         missing_info = res$missing_info
       ))
     }
+
+    # Hit: requested mode satisfied
     return(list(
-      type = "no separation problem",
-      message = "No separation problem detected.",
+      type = res$type,
+      satisfied = TRUE,
+      available_types = if (identical(res$type, "perfect separation"))
+        c("perfect") else c("quasi"),
+      removed = res$removed,
+      message = if (identical(res$type, "perfect separation"))
+        "Perfect separation found on the given predictors."
+      else
+        sprintf("Quasi-complete separation: removing any of {%s} yields perfect.",
+                paste(res$removed, collapse = ", ")),
       missing_info = res$missing_info
     ))
   }
@@ -178,6 +246,37 @@ latent_separation <- function(
   }
 
   list(minimal_subsets = minimal)
+}
+
+# -------------------------------------------------------------------
+# Internal: evaluate both perfect and quasi (row-deletion) conditions
+# -------------------------------------------------------------------
+#' @keywords internal
+.check_sep_both <- function(y, X, epsilon = 1e-5) {
+  # helper using the LP feasibility check
+  .is_perfect <- function(y, X) {
+    res <- feasibility_check_LP(y, X, epsilon = epsilon)
+    # lpSolve status 0 = feasible
+    (res$ge$status == 0L) || (res$le$status == 0L)
+  }
+
+  perfect <- .is_perfect(y, X)
+
+  removed <- integer(0)
+  if (!perfect) {
+    n <- length(y)
+    for (i in seq_len(n)) {
+      yi <- y[-i]
+      Xi <- X[-i, , drop = FALSE]
+      if (.is_perfect(yi, Xi)) removed <- c(removed, i)
+    }
+  }
+
+  list(
+    perfect = perfect,
+    quasi   = length(removed) > 0L,
+    removed = if (perfect) NULL else removed
+  )
 }
 
 
