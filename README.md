@@ -174,10 +174,25 @@ res_lat_imp <- latent_separation(
 )
 gt_latent_separation(res_lat_imp, title = "Latent Minimal Subsets — Imputed")
 ```
+![Latent DISCO table](man/figures/readme-latent-gt-complete.png)
+
+> Summarizes subsets of predictors that yield separation in a **complete-case analysis**. See the original table notes for interpretation of “Removed And Rest Reach Perfect”, “Rows Used (Original Indices)”, etc.
+
+```r
+# Latent minimal subsets (imputed)
+res_lat_imp <- latent_separation(
+  y = df_miss$Y,
+  X = df_miss[, c("X1","X2","Race","L1")],
+  find_minimal = TRUE,
+  missing = "impute",
+  impute_args = list(numeric_method = "mean", categorical_method = "missing", logical_method = "mode")
+)
+gt_latent_separation(res_lat_imp, title = "Latent Minimal Subsets — Imputed")
+```
 
 ![Latent DISCO table](man/figures/readme-latent-gt.png)
 
-> Summarizes subsets of predictors that yield separation in a **complete-case analysis**. See the original table notes for interpretation of “Removed And Rest Reach Perfect”, “Rows Used (Original Indices)”, etc.
+
 
 ---
 
