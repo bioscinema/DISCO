@@ -2,7 +2,7 @@
 % Please edit documentation in R/Latent_separation.R
 \name{latent_separation}
 \alias{latent_separation}
-\title{LP-based latent separation detection (margin-max LP; quasi via non-strict feasibility)}
+\title{LP-based latent separation detection (with optional minimal-subset search)}
 \usage{
 latent_separation(
   y,
@@ -29,7 +29,7 @@ latent_separation(
 
 \item{min_vars}{Minimum subset size to consider.}
 
-\item{epsilon}{Ignored in margin-max LP; kept for API compatibility.}
+\item{epsilon}{Numeric scalar > 0. Margin used in LP feasibility check (default 1e-5). Larger values make the test stricter; smaller values approach the limiting definition.}
 
 \item{only_perfect}{Legacy flag for exhaustive mode (kept for compatibility).}
 
@@ -41,15 +41,24 @@ latent_separation(
 
 \item{stop_at_first}{If TRUE and find_minimal=TRUE, stop after the first minimal hit.}
 
-\item{missing}{"complete" or "impute" for predictors (never impute outcome).}
+\item{missing}{How to treat missing data: "complete" (drop rows w/ NA in the subset) or "impute" (impute predictors; never impute outcome).}
 
-\item{impute_args}{Options for imputation when missing="impute".}
+\item{impute_args}{Optional list of imputation settings when
+\code{missing = "impute"}. Recognized keys:
+\itemize{
+\item \code{numeric_method}: "median" (default) or "mean"
+\item \code{categorical_method}: "mode" (default) or "missing"
+\item \code{logical_method}: "mode" (default) or "missing"
+\item \code{custom_fn}: function(data.frame) -> imputed data.frame
+}}
 
-\item{scale_X}{If TRUE, scale encoded predictors with base scale() (recommended).}
+\item{scale_X}{Logical; if TRUE, standardize encoded predictors with base \code{scale()} (default FALSE).}
 }
 \value{
-Single-result list or a list with $minimal_subsets (same API as before).
+If not searching: single result list {type, removed?, message, missing_info}.
+If searching: list with $minimal_subsets (named by vars joined with "_"), each containing
+{type, vars, removed?, missing_info}.
 }
 \description{
-LP-based latent separation detection (margin-max LP; quasi via non-strict feasibility)
+LP-based latent separation detection (with optional minimal-subset search)
 }
