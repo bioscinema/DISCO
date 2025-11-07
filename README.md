@@ -164,15 +164,15 @@ gt_uni_separation_all(df_miss, outcome = "Y", missing = "complete")
 > This table summarizes univariate screen results of each predictor against the outcome (`Y`) using **complete-case** data. It flags whether any single predictor causes separation in a logistic model. See the README earlier version for column definitions: Separation Index, Severity, Boundary Threshold, Single-Tie Boundary, Tie Count, Missing-Data Handling block, Separation label, and Rows Used (Original Indices).
 
 ```r
-# Latent minimal subsets (imputed)
+# Latent minimal subsets (complete)
 res_lat_imp <- latent_separation(
   y = df_miss$Y,
   X = df_miss[, c("X1","X2","Race","L1")],
   find_minimal = TRUE,
-  missing = "impute",
-  impute_args = list(numeric_method = "mean", categorical_method = "missing", logical_method = "mode")
+  missing = "complete"
 )
-gt_latent_separation(res_lat_imp, title = "Latent Minimal Subsets — Imputed")
+gt_latent_separation(res_lat_imp, title = "Latent Minimal Subsets — Complete-Case")
+
 ```
 ![Latent DISCO table](man/figures/readme-latent-gt-complete.png)
 
