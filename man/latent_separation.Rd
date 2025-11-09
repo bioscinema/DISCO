@@ -17,7 +17,10 @@ latent_separation(
   stop_at_first = FALSE,
   missing = c("complete", "impute"),
   impute_args = list(),
-  scale_X = FALSE
+  scale_X = FALSE,
+  tau_complete = 1e-06,
+  eps_boundary = NULL,
+  quasi_to_none_if = 0.9
 )
 }
 \arguments{
@@ -25,40 +28,130 @@ latent_separation(
 
 \item{X}{Matrix or data frame of predictors (columns = variables).}
 
-\item{test_combinations}{If TRUE, test every subset of size ≥ min_vars (legacy exhaustive mode).}
+\item{test_combinations}{If \code{TRUE}, test every subset of size ≥ \code{min_vars}
+(legacy exhaustive mode).}
 
-\item{min_vars}{Minimum subset size to consider.}
+\item{min_vars}{Minimum subset size to consider (default 2).}
 
-\item{epsilon}{Numeric scalar > 0. Margin used in LP feasibility check (default 1e-5). Larger values make the test stricter; smaller values approach the limiting definition.}
+\item{epsilon}{Numeric scalar > 0. Legacy margin parameter for the old LP
+feasibility; here it is used as the \strong{default} for \code{eps_boundary}
+(the target margin in the severity LP). Default \code{1e-5}.}
 
 \item{only_perfect}{Legacy flag for exhaustive mode (kept for compatibility).}
 
-\item{find_minimal}{If TRUE, return inclusion-minimal separating subsets using pruning.}
+\item{find_minimal}{If \code{TRUE}, return inclusion-minimal separating subsets
+using pruning.}
 
-\item{mode}{"either", "perfect", or "quasi" – what to count as a hit.}
+\item{mode}{One of \code{"either"}, \code{"perfect"}, or \code{"quasi"} – which kind of
+separation to regard as a \strong{hit}.}
 
 \item{max_vars}{Optional upper bound on subset size (default: all the way to p).}
 
-\item{stop_at_first}{If TRUE and find_minimal=TRUE, stop after the first minimal hit.}
+\item{stop_at_first}{If \code{TRUE} and \code{find_minimal=TRUE}, stop after the first
+minimal hit.}
 
-\item{missing}{How to treat missing data: "complete" (drop rows w/ NA in the subset) or "impute" (impute predictors; never impute outcome).}
+\item{missing}{How to treat missing data: \code{"complete"} (drop rows with NA in
+the subset) or \code{"impute"} (impute predictors; never impute outcome).}
 
 \item{impute_args}{Optional list of imputation settings when
 \code{missing = "impute"}. Recognized keys:
 \itemize{
-\item \code{numeric_method}: "median" (default) or "mean"
-\item \code{categorical_method}: "mode" (default) or "missing"
-\item \code{logical_method}: "mode" (default) or "missing"
+\item \code{numeric_method}: \code{"median"} (default) or \code{"mean"}
+\item \code{categorical_method}: \code{"mode"} (default) or \code{"missing"}
+\item \code{logical_method}: \code{"mode"} (default) or \code{"missing"}
 \item \code{custom_fn}: function(data.frame) -> imputed data.frame
 }}
 
-\item{scale_X}{Logical; if TRUE, standardize encoded predictors with base \code{scale()} (default FALSE).}
+\item{scale_X}{Logical; if \code{TRUE}, standardize encoded predictors with base
+\code{scale()} (default \code{FALSE}). Recommended \code{TRUE} when comparing
+\code{K_relax} across datasets.}
+
+\item{tau_complete}{Numeric scalar > 0. Threshold on the \strong{max-margin} value
+to declare \strong{complete separation} (Stage A). Default \code{1e-6} (after scaling).}
+
+\item{eps_boundary}{Numeric scalar > 0. Target margin \eqn{\delta} for the
+\strong{severity LP} used to compute \eqn{K_relax}. If \code{NULL}, defaults to
+\code{epsilon}. Typical values on standardized features: \code{1e-3}–\code{1e-4}.}
+
+\item{quasi_to_none_if}{Numeric in (0,1]. If \eqn{K_relax \ge \rho n}, then
+quasi is treated as \strong{none} (non-substantive). Default \code{0.9}.}
 }
 \value{
-If not searching: single result list {type, removed?, message, missing_info}.
-If searching: list with $minimal_subsets (named by vars joined with "_"), each containing
-{type, vars, removed?, missing_info}.
+\itemize{
+\item \strong{Single-set mode} (default): a list with fields
+\itemize{
+\item \code{type}: \code{"perfect separation"}, \code{"quasi-complete separation"}, or
+\code{"no separation problem"}.
+\item \code{satisfied}: logical, whether the requested \code{mode} is satisfied.
+\item \code{available_types}: which types exist regardless of \code{mode}.
+\item \code{removed}: (quasi only) integer indices of observations whose removal
+yields perfect (diagnostic; not used for the decision).
+\item \code{message}: human-readable message.
+\item \code{missing_info}: list with missing-data handling metadata.
+\item \code{diagnostics}: list with \code{delta_hat} (max-margin), \code{K_relax}, and \code{n}.
+}
+\item \strong{Exhaustive mode} (\code{test_combinations=TRUE}): a named list of hits (by
+concatenated variable names), each element containing
+\verb{\{type, vars, removed, missing_info, diagnostics\}}.
+\item \strong{Minimal-subset mode} (\code{find_minimal=TRUE}): a list with
+\verb{$minimal_subsets}, each entry \verb{\{type, vars, idx, removed, missing_info, diagnostics\}}.
+}
 }
 \description{
-LP-based latent separation detection (with optional minimal-subset search)
+This function detects latent (complete or quasi-complete) separation for a
+binary outcome using \strong{linear programming} in the \emph{multivariate} space.
+It upgrades the classic feasibility-only LP check to a \strong{two-stage} pipeline:
+(i) a \strong{max-margin LP} with positive/negative split and an L1 \emph{equality}
+normalization to identify \strong{complete separation}; and (ii) a \strong{severity LP}
+that computes a multivariate severity lower bound \eqn{K_relax}, i.e.,
+the minimal “boundary tie budget” (LP relaxation) needed to lift the \strong{smallest
+margin} to a target \eqn{\delta} on the standardized scale. When
+\eqn{K_relax/n} is large (by default \eqn{\ge \rho=0.9}), quasi is treated as
+\strong{non-substantive} and labeled \strong{no separation} to avoid false positives.
+}
+\details{
+The function keeps your previous interface and search utilities:
+\itemize{
+\item A single-set check (default).
+\item Exhaustive subset testing (\code{test_combinations = TRUE}).
+\item Minimal-subset search with pruning (\code{find_minimal = TRUE}).
+}
+
+It also preserves the legacy \strong{row-deletion} diagnostic for quasi
+(indices of observations whose removal yields perfect separation),
+reported in \code{removed}, but \strong{does not} drive the quasi decision alone.
+}
+\section{Method (outline)}{
+
+Stage A (\strong{max-margin LP}): maximize \eqn{\delta} subject to
+\eqn{y_i(\beta_0 + x_i^\top\beta) - \delta \ge 0} with
+\eqn{\beta = s^+ - s^-}, \eqn{s^\pm \ge 0}, and \eqn{\| \beta \|_1 = \mathbf{1}^\top(s^+ + s^-) = 1}.
+If \eqn{\hat\delta > \tau_\text{complete}}, declare \strong{complete separation}.
+
+Stage B (\strong{delta=0 feasibility}): check feasibility with \eqn{\delta=0} under
+the same normalization. If feasible, compute \strong{multivariate severity}
+\eqn{K_\text{relax} = \lceil \sum_i t_i^\* / \delta \rceil} from the LP
+\eqn{\min \sum_i t_i} s.t. \eqn{y_i(\beta_0 + x_i^\top\beta) + t_i \ge \delta},
+\eqn{t_i \ge 0}, \eqn{\| \beta \|_1 = 1}. If \eqn{K_\text{relax} \ge \rho n}
+(with \eqn{\rho=\texttt{quasi\_to\_none\_if}}), treat quasi as \strong{none}.
+}
+
+\section{Practical tips}{
+
+\itemize{
+\item Use \code{scale_X = TRUE} (recommended) to stabilize thresholds and comparisons.
+\item Sensitivity-check \code{eps_boundary} (e.g., \code{1e-4}–\code{1e-2}); \code{K_relax} increases
+with larger target margins.
+\item \code{quasi_to_none_if} controls how strict you are in down-weighting weak quasi.
+}
+}
+
+\examples{
+# Simple no-separation example
+X1 <- c(0, -10, 2, -9, 5)
+Y1 <- c(0,   0, 0,  1, 1)
+res <- latent_separation(Y1, cbind(X1), scale_X = TRUE)
+str(res)
+res$type; res$diagnostics
+
 }
