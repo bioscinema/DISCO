@@ -11,7 +11,7 @@
 #' that computes a multivariate severity lower bound \eqn{K_relax}, i.e.,
 #' the minimal “boundary tie budget” (LP relaxation) needed to lift the **smallest
 #' margin** to a target \eqn{\delta} on the standardized scale. When
-#' \eqn{K_relax/n} is large (by default \eqn{\ge \rho=0.9}), quasi is treated as
+#' \eqn{K_relax/n} is large (by default \eqn{\ge \rho=0.5}), quasi is treated as
 #' **non-substantive** and labeled **no separation** to avoid false positives.
 #'
 #' The function keeps your previous interface and search utilities:
@@ -58,7 +58,7 @@
 #'   **severity LP** used to compute \eqn{K_relax}. If `NULL`, defaults to
 #'   `epsilon`. Typical values on standardized features: `1e-3`–`1e-4`.
 #' @param quasi_to_none_if Numeric in (0,1]. If \eqn{K_relax \ge \rho n}, then
-#'   quasi is treated as **none** (non-substantive). Default `0.9`.
+#'   quasi is treated as **none** (non-substantive). Default `0.5`.
 #'
 #' @return
 #' - **Single-set mode** (default): a list with fields
@@ -125,7 +125,7 @@ latent_separation <- function(
     # --- new knobs (backward compatible defaults) ---
     tau_complete = 1e-6,
     eps_boundary = NULL,
-    quasi_to_none_if = 0.9
+    quasi_to_none_if = 0.5
 ) {
   mode <- match.arg(mode)
   missing <- match.arg(missing)

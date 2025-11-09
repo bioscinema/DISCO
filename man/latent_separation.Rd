@@ -20,7 +20,7 @@ latent_separation(
   scale_X = FALSE,
   tau_complete = 1e-06,
   eps_boundary = NULL,
-  quasi_to_none_if = 0.9
+  quasi_to_none_if = 0.5
 )
 }
 \arguments{
@@ -74,7 +74,7 @@ to declare \strong{complete separation} (Stage A). Default \code{1e-6} (after sc
 \code{epsilon}. Typical values on standardized features: \code{1e-3}–\code{1e-4}.}
 
 \item{quasi_to_none_if}{Numeric in (0,1]. If \eqn{K_relax \ge \rho n}, then
-quasi is treated as \strong{none} (non-substantive). Default \code{0.9}.}
+quasi is treated as \strong{none} (non-substantive). Default \code{0.5}.}
 }
 \value{
 \itemize{
@@ -106,7 +106,7 @@ normalization to identify \strong{complete separation}; and (ii) a \strong{sever
 that computes a multivariate severity lower bound \eqn{K_relax}, i.e.,
 the minimal “boundary tie budget” (LP relaxation) needed to lift the \strong{smallest
 margin} to a target \eqn{\delta} on the standardized scale. When
-\eqn{K_relax/n} is large (by default \eqn{\ge \rho=0.9}), quasi is treated as
+\eqn{K_relax/n} is large (by default \eqn{\ge \rho=0.5}), quasi is treated as
 \strong{non-substantive} and labeled \strong{no separation} to avoid false positives.
 }
 \details{
