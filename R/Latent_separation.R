@@ -50,7 +50,7 @@
 #'     \item \code{custom_fn}: function(data.frame) -> imputed data.frame
 #'   }
 #' @param scale_X Logical; if `TRUE`, standardize encoded predictors with base
-#'   \code{scale()} (default `FALSE`). Recommended `TRUE` when comparing
+#'   \code{scale()} (default `TRUE`). Recommended `TRUE` when comparing
 #'   `K_relax` across datasets.
 #' @param tau_complete Numeric scalar > 0. Threshold on the **max-margin** value
 #'   to declare **complete separation** (Stage A). Default `1e-6` (after scaling).
@@ -114,7 +114,7 @@ latent_separation <- function(
     stop_at_first = FALSE,
     missing = c("complete","impute"),
     impute_args = list(),
-    scale_X = FALSE,
+    scale_X = TRUE,
     # --- new knobs (backward compatible defaults) ---
     tau_complete = 1e-6,
     eps_boundary = NULL,

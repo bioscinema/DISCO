@@ -17,7 +17,7 @@ latent_separation(
   stop_at_first = FALSE,
   missing = c("complete", "impute"),
   impute_args = list(),
-  scale_X = FALSE,
+  scale_X = TRUE,
   tau_complete = 1e-06,
   eps_boundary = NULL,
   quasi_to_none_if = 0.5
@@ -63,7 +63,7 @@ the subset) or \code{"impute"} (impute predictors; never impute outcome).}
 }}
 
 \item{scale_X}{Logical; if \code{TRUE}, standardize encoded predictors with base
-\code{scale()} (default \code{FALSE}). Recommended \code{TRUE} when comparing
+\code{scale()} (default \code{TRUE}). Recommended \code{TRUE} when comparing
 \code{K_relax} across datasets.}
 
 \item{tau_complete}{Numeric scalar > 0. Threshold on the \strong{max-margin} value
