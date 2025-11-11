@@ -100,13 +100,6 @@
 #'   with larger target margins.
 #' - `quasi_to_none_if` controls how strict you are in down-weighting weak quasi.
 #'
-#' @examples
-#' # Simple no-separation example
-#' X1 <- c(0, -10, 2, -9, 5)
-#' Y1 <- c(0,   0, 0,  1, 1)
-#' res <- latent_separation(Y1, cbind(X1), scale_X = TRUE)
-#' str(res)
-#' res$type; res$diagnostics
 #'
 #' @export
 latent_separation <- function(
@@ -152,8 +145,7 @@ latent_separation <- function(
     if (is.logical(y)) return(as.integer(y))
     if (is.factor(y))  return(as.integer(y == levels(y)[2L]))
     if (is.character(y)) {
-      # 两水平字符，取第二个水平为 1
-      lev <- unique(y)
+      lev <- factor(y)
       if (length(lev) != 2L) stop("Character outcome must have exactly 2 levels.")
       return(as.integer(y == lev[2L]))
     }

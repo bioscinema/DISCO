@@ -146,12 +146,3 @@ with larger target margins.
 }
 }
 
-\examples{
-# Simple no-separation example
-X1 <- c(0, -10, 2, -9, 5)
-Y1 <- c(0,   0, 0,  1, 1)
-res <- latent_separation(Y1, cbind(X1), scale_X = TRUE)
-str(res)
-res$type; res$diagnostics
-
-}
