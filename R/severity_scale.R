@@ -19,3 +19,4 @@ severity_scale <- function(sep_idx, threshold, tie_count, n, is_perfect) {
   raw <- (sep_idx - threshold) / (1 - threshold)
   raw * (1 - tie_count / n)
 }
+

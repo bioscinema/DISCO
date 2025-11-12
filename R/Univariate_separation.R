@@ -147,11 +147,12 @@ uni_separation <- function(
   X1u <- sort(unique(x[idx1]))
   shared <- intersect(X0u, X1u)
 
+  eps <- 1e-8 # avoid issue from floating point precision
   single_tie <- length(shared) == 1L && (
-    (all(X0u <= shared) && all(X1u >= shared)) ||
-      (all(X0u >= shared) && all(X1u <= shared))
+    (all(X0u <= shared + eps) && all(X1u >= shared - eps)) ||
+      (all(X0u >= shared - eps) && all(X1u <= shared + eps))
   )
-  tie_count <- if (isTRUE(single_tie)) sum(x == shared) else 0L
+  tie_count <- if (isTRUE(single_tie)) sum(abs(x - shared) < eps) else 0L
 
   raw_thresh      <- 1 - (2 * tie_count / n)
   boundary_thresh <- max(raw_thresh, 0)
@@ -167,16 +168,16 @@ uni_separation <- function(
 
   sev_score <- severity_scale(sep_idx, boundary_thresh, tie_count, n, is_perfect)
 
-  list(
+  out <- list(
     predictor           = predictor,
     outcome             = outcome,
     separation_type     = sep_type,
-    separation_index    = sep_idx,
-    severity_score      = sev_score,
+    separation_index    = round(sep_idx, 3),
+    severity_score      = round(sev_score, 3),
     rand_details        = ri,
     single_tie_boundary = single_tie,
     tie_rows_boundary   = tie_count,
-    boundary_threshold  = boundary_thresh,
+    boundary_threshold  = round(boundary_thresh, 3),
     missing_info        = list(
       method = mh$params_used$method,
       params = mh$params_used,
@@ -184,4 +185,28 @@ uni_separation <- function(
       n_used = length(mh$rows_used)
     )
   )
+
+  class(out) <- "uni_separation"
+  out
+}
+
+#' @export
+print.uni_separation <- function(x, digits = 3, ...) {
+  fmt <- function(z) sprintf("%.*f", digits, z)
+
+  cat("Univariate separation for", x$predictor, "vs", x$outcome, "\n")
+
+  # For constant outcome/predictor early exits
+  if (!is.null(x$message)) {
+    cat("  ", x$message, "\n", sep = "")
+    return(invisible(x))
+  }
+
+  cat("  separation type:       ", x$separation_type, "\n", sep = "")
+  cat("  separation index (SI): ", fmt(x$separation_index), "\n", sep = "")
+  cat("  severity score:        ", fmt(x$severity_score), "\n", sep = "")
+  cat("  boundary threshold τ+: ", fmt(x$boundary_threshold), "\n", sep = "")
+  cat("  boundary tie rows nb:  ", x$tie_rows_boundary, "\n", sep = "")
+  cat("  single-tie boundary:   ", x$single_tie_boundary, "\n", sep = "")
+  invisible(x)
 }
