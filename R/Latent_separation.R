@@ -55,8 +55,8 @@
 #' @param tau_complete Numeric scalar > 0. Threshold on the **max-margin** value
 #'   to declare **complete separation** (Stage A). Default `1e-6` (after scaling).
 #' @param eps_boundary Numeric scalar > 0. Target margin \eqn{\delta} for the
-#'   **severity LP** used to compute \eqn{K_relax}. If `NULL`, defaults to
-#'   `epsilon`. Typical values on standardized features: `1e-3`–`1e-4`.
+#'   **severity LP** used to compute \eqn{K_{relax}}. If `NULL`, defaults to
+#'   `1e-5`. Typical values on standardized features: `1e-3`–`1e-4`.
 #' @param quasi_to_none_if Numeric in (0,1]. If \eqn{K_relax \ge \rho n}, then
 #'   quasi is treated as **none** (non-substantive). Default `0.5`.
 #'

@@ -70,8 +70,8 @@ the subset) or \code{"impute"} (impute predictors; never impute outcome).}
 to declare \strong{complete separation} (Stage A). Default \code{1e-6} (after scaling).}
 
 \item{eps_boundary}{Numeric scalar > 0. Target margin \eqn{\delta} for the
-\strong{severity LP} used to compute \eqn{K_relax}. If \code{NULL}, defaults to
-\code{epsilon}. Typical values on standardized features: \code{1e-3}–\code{1e-4}.}
+\strong{severity LP} used to compute \eqn{K_{relax}}. If \code{NULL}, defaults to
+\code{1e-5}. Typical values on standardized features: \code{1e-3}–\code{1e-4}.}
 
 \item{quasi_to_none_if}{Numeric in (0,1]. If \eqn{K_relax \ge \rho n}, then
 quasi is treated as \strong{none} (non-substantive). Default \code{0.5}.}
