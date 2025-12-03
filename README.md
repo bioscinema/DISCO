@@ -196,7 +196,7 @@ gt_latent_separation(res_lat_imp, title = "Latent Minimal Subsets — Imputed")
 
 ---
 
-## Severity-adaptive Univariate Bayes — `EP_univariable`
+## Univariate Issue — `EP_univariable`
 
 `EP_univariable()` fits **intercept + one predictor** logistic regression with a **severity-adaptive MEP prior** informed by `uni_separation()`. It uses a random-walk MH sampler with light auto-tuning.
 
@@ -256,35 +256,9 @@ fit_im <- EP_univariable(df2, "x", "y", missing = "impute",
 - `beta1_logit` — change in log-odds per **1 unit** increase in original X.
 - `beta1_SAS = beta1_logit * (π/√3)`; `beta1_Long = beta1_logit * (π/√3 + 1)`.
 - `beta0_orig` aligns the intercept with original X-units.
-
 ---
 
-## Bayesian Estimation (multivariate) — CIs & means
-
-### Core sampler (fixed prior): `mep_function()`
-
-```r
-set.seed(1)
-y <- c(0,0,0,0,1,1,1,1)
-X <- cbind(
-  X1 = c(-1.86, -0.81,  1.32, -0.40,  0.91,  2.49,  0.34,  0.25),
-  X2 = c( 0.52, -0.07,  0.60,  0.67, -1.39,  0.16, -1.40, -0.09)
-)
-p <- ncol(X) + 1
-fit <- mep_function(
-  n_iter = 10000, burn_in = 1000, init_beta = rep(0.01, p), step_size = 0.4,
-  X_orig = X, y = y, mu = rep(0, p), Sigma = diag(p), kappa = 1,
-  scale_X = TRUE, ci_level = 0.95
-)
-head(fit$scaled_summary)         # working/logit space with CIs
-head(fit$standardized_coefs_back) # A / SAS / Long with CIs
-```
-
-> Note: Output includes **Scaled / A / SAS / Long**; no “M” scale.
-
----
-
-## Unified latent MEP — `MEP_latent()`
+## Unified Latent Issue — `MEP_latent()`
 
 Fits a logistic model with a **Multivariate Exponential Power (MEP)** prior via RW–MH and performs a small grid search over prior settings \((\mu, \Sigma, \kappa)\). Predictors are **always z-scored internally** (safe-scaling). Summaries and CIs are reported on the working (logit/standardized) scale and **back-transformed to the original (encoded) predictor scale**.
 
@@ -349,6 +323,7 @@ fit_f <- MEP_latent(
   kappa_vals = c(1, 2),
   missing = "complete", seed = 99
 )
+fit_cc$scaled_summary
 fit_f$standardized_coefs_back     # contains column "GB" (= B vs A)
 
 ## Impute: add an NA to a factor and a numeric column
@@ -369,7 +344,7 @@ head(fit_i$scaled_summary)
 
 ---
 
-## Severity-Adaptive MEP for Mixtures — `MEP_mixture()` 
+## Mixture Issue — `MEP_mixture()` 
 
 - Encodes `X` via `model.matrix(~ ., data = X)` (intercept dropped for slopes).
 - For each **original** predictor (before encoding), computes a **DISCO severity** (on modeling rows). **Numeric predictors are z-scored** for the severity computation (factors unchanged).
@@ -479,7 +454,7 @@ MEP_latent(
   verbose = FALSE, seed = NULL
 )
 
-# Hybrid Situation
+# Mixture Situation
 MEP_mixture(
   y, X,
   missing = c("complete","impute"),
