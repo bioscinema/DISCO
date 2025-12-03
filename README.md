@@ -129,18 +129,18 @@ df_miss <- data.frame(
 
 # Complete-case
 res_cc <- uni_separation(df_miss, "X1", "Y", missing = "complete")
-res_cc$missing_info
+res_cc
 
 # Impute (defaults = numeric median, categorical mode, logical mode)
 res_imp <- uni_separation(df_miss, "X1", "Y", missing = "impute")
-res_imp$missing_info
+res_imp
 
 # Treat NA as a level for categorical predictors
 res_cat <- uni_separation(
   df_miss, "Race", "Y", missing = "impute",
   impute_args = list(categorical_method = "missing")
 )
-res_cat$missing_info$params
+res_cat
 ```
 
 ### Pretty tables (`gt`) — optional
