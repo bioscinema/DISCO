@@ -165,13 +165,13 @@ gt_uni_separation_all(df_miss, outcome = "Y", missing = "complete")
 
 ```r
 # Latent minimal subsets (complete)
-res_lat_imp <- latent_separation(
+res_lat_com <- latent_separation(
   y = df_miss$Y,
   X = df_miss[, c("X1","X2","Race","L1")],
   find_minimal = TRUE,
   missing = "complete"
 )
-gt_latent_separation(res_lat_imp, title = "Latent Minimal Subsets — Complete-Case")
+gt_latent_separation(res_lat_com, title = "Latent Minimal Subsets — Complete-Case")
 
 ```
 ![Latent DISCO table](man/figures/readme-latent-gt-complete.png)

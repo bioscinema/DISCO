@@ -174,16 +174,32 @@ gt_uni_separation <- function(res, title = "Univariate Separation",
 tidy_latent_separation <- function(res) {
   as_row <- function(name, item) {
     mi <- item$missing_info %||% list()
+    di <- item$diagnostics %||% list()
+
+    n_diag <- di$n %||% mi$n_used %||% NA_integer_
+    K_rel  <- di$K_relax %||% NA_real_
+
+    K_rel_norm <- if (!is.null(K_rel) && !is.null(n_diag) &&
+                      is.finite(K_rel) && n_diag > 0L) {
+      as.numeric(K_rel) / as.numeric(n_diag)
+    } else {
+      NA_real_
+    }
+
     tibble::tibble(
       subset_name    = name,
       vars           = paste(item$vars %||% NA_character_, collapse = ", "),
       k              = length(item$vars %||% character()),
       type           = item$type %||% res$type %||% NA_character_,
       removed        = paste(item$removed %||% character(), collapse = ", "),
+      #delta_hat      = as.numeric(di$delta_hat %||% NA_real_),
+      K_relax        = as.numeric(K_rel %||% NA_real_),0,
+      K_relax_per_n  = round(as.numeric(K_rel_norm),3),
+      n              = as.integer(n_diag),
       missing_method = .to_titlecase(mi$method %||% NA_character_),
       impute_params  = .format_impute_params(mi$params %||% NULL),
       n_used         = as.integer(mi$n_used %||% NA_integer_),
-      # IMPORTANT: rows_used should be ORIGINAL indices (record upstream!)
+      # ORIGINAL indices, as before
       rows_used      = list(mi$rows_used %||% integer())
     )
   }
@@ -191,15 +207,29 @@ tidy_latent_separation <- function(res) {
   if (!is.null(res$minimal_subsets)) {
     lst <- res$minimal_subsets
     if (!length(lst)) {
-      return(tibble::tibble(subset_name=character(), vars=character(), k=integer(),
-                            type=character(), removed=character(),
-                            missing_method=character(), impute_params=character(),
-                            n_used=integer(), rows_used=list()))
+      return(
+        tibble::tibble(
+          subset_name   = character(),
+          vars          = character(),
+          k             = integer(),
+          type          = character(),
+          removed       = character(),
+          K_relax       = numeric(),
+          K_relax_per_n = numeric(),
+          n             = integer(),
+          missing_method = character(),
+          impute_params  = character(),
+          n_used         = integer(),
+          rows_used      = list()
+        )
+      )
     }
     dplyr::bind_rows(Map(as_row, names(lst), unname(lst)))
   } else if (!is.null(res$type)) {
+    # single-set mode: treat as one "subset"
     as_row("(all predictors)", res)
   } else if (is.list(res) && length(res) && !is.null(res[[1]]$type)) {
+    # exhaustive mode: named list of subsets
     dplyr::bind_rows(Map(as_row, names(res), unname(res)))
   } else {
     stop("Unrecognized structure for latent_separation() result.")
@@ -212,15 +242,23 @@ tidy_latent_separation <- function(res) {
 #' @param sort_by Columns to sort by (in priority order)
 #' @param show_rows_used If TRUE, show preview of row indices per subset
 #' @export
-gt_latent_separation <- function(res, title = "Latent Separation: Minimal Subsets",
-                                 subtitle = NULL, sort_by = c("type","k","n_used"),
-                                 show_rows_used = FALSE) {
+gt_latent_separation <- function(
+    res,
+    title = "Latent Separation: Minimal Subsets",
+    subtitle = NULL,
+    sort_by = c("type_order", "K_relax_per_n", "k", "n_used"),
+    show_rows_used = FALSE,
+    digits = 3
+) {
   stopifnot(requireNamespace("gt", quietly = TRUE))
   df <- tidy_latent_separation(res)
   if (nrow(df) == 0L) {
     return(
       gt::gt(tibble::tibble(Note = "No Separating Subset Found.")) |>
-        gt::tab_header(title = .to_titlecase(title), subtitle = .to_titlecase(subtitle))
+        gt::tab_header(
+          title    = .to_titlecase(title),
+          subtitle = .to_titlecase(subtitle)
+        )
     )
   }
 
@@ -229,13 +267,15 @@ gt_latent_separation <- function(res, title = "Latent Separation: Minimal Subset
     grepl("^Perfect", df$type) ~ 1L,
     grepl("^Quasi",   df$type) ~ 2L,
     grepl("^No ",     df$type) ~ 3L,
-    TRUE ~ 9L
+    TRUE                        ~ 9L
   )
 
-  # Stable sort by user preference
-  for (key in rev(sort_by)) if (key %in% names(df)) df <- df[order(df[[key]]), , drop = FALSE]
+  for (key in rev(sort_by)) {
+    if (key %in% names(df)) {
+      df <- df[order(df[[key]]), , drop = FALSE]
+    }
+  }
 
-  # Show rows used (Complete-case => full list)
   df$rows_used_str <- mapply(
     .rows_used_display,
     df$rows_used,
@@ -244,30 +284,65 @@ gt_latent_separation <- function(res, title = "Latent Separation: Minimal Subset
     SIMPLIFY = TRUE, USE.NAMES = FALSE
   )
 
-  # Title-case character body cells EXCEPT impute_params
   char_cols <- vapply(df, is.character, logical(1))
   keep_cols <- setdiff(names(df)[char_cols], c("impute_params"))
   df[keep_cols] <- lapply(df[keep_cols], .to_titlecase)
 
   gt::gt(df) |>
-    gt::tab_header(title = .to_titlecase(title), subtitle = .to_titlecase(subtitle)) |>
+    gt::tab_header(
+      title    = .to_titlecase(title),
+      subtitle = .to_titlecase(subtitle)
+    ) |>
     gt::cols_label(
       subset_name    = "Subset",
       vars           = "Variables",
       k              = "# Of Predictors",
       Type           = "Separation",
-      removed        = "Removed And Rest Reach Perfect",
+      K_relax        = "K_relax",
+      K_relax_per_n  = "K_relax / n",
+      n              = "n In LP",
       missing_method = "Missing Method",
       impute_params  = "Imputation Params",
       n_used         = "N Used",
       rows_used_str  = "Rows Used (Original Indices)"
     ) |>
-    gt::cols_hide(columns = c(type, type_order, rows_used)) |>
+    # hide internal columns
+    gt::cols_hide(columns = c(type, type_order, rows_used, removed)) |>
+    # K_relax as integer 0,1,2,3,...
+    gt::fmt_number(
+      columns  = c(K_relax),
+      decimals = 0
+    ) |>
+    # K_relax_per_n with decimals
+    gt::fmt_number(
+      columns  = c(K_relax_per_n),
+      decimals = digits
+    ) |>
     gt::fmt_markdown(columns = c(Type)) |>
-    gt::tab_spanner(label = "Subset", columns = c(subset_name, vars, k)) |>
-    gt::tab_spanner(label = "Missing-Data Handling", columns = c(missing_method, impute_params, n_used)) |>
-    gt::tab_options(table.font.size = gt::px(14), data_row.padding = gt::px(4))
+    # more severe (small K_relax_per_n) in red
+    gt::data_color(
+      columns = c(K_relax_per_n),
+      fn = function(x) .palette01_fn(1 - x)
+    ) |>
+    gt::tab_spanner(
+      label   = "Subset",
+      columns = c(subset_name, vars, k)
+    ) |>
+    gt::tab_spanner(
+      label   = "Severity",
+      columns = c(K_relax, K_relax_per_n, n)
+    ) |>
+    gt::tab_spanner(
+      label   = "Missing-Data Handling",
+      columns = c(missing_method, impute_params, n_used)
+    ) |>
+    gt::tab_options(
+      table.font.size  = gt::px(14),
+      data_row.padding = gt::px(4)
+    )
 }
+
+
 
 # ---------- Univariate across all predictors ----------
 

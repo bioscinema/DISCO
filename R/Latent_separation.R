@@ -439,36 +439,131 @@ latent_separation <- function(
     return(results)
   }
 
+#   # === Minimal-subset search with pruning =====================================
+#   minimal <- list()
+#   minimal_idx <- list()
+#   contains_any_minimal <- function(cols) {
+#     if (!length(minimal_idx)) return(FALSE)
+#     for (m in minimal_idx) if (all(m %in% cols)) return(TRUE)
+#     FALSE
+#   }
+#
+#   for (k in seq.int(min_vars, max_vars)) {
+#     cand <- combn(p, k, simplify = FALSE)
+#     cand <- Filter(function(cols) !contains_any_minimal(cols), cand)
+#     if (!length(cand)) next
+#     for (cols in cand) {
+#       out <- run_one(cols, mode)
+#       if (out$hit) {
+#         nm <- paste(var_names[cols], collapse = "_")
+#         minimal[[nm]] <- list(
+#           type = out$type,
+#           vars = var_names[cols],
+#           idx  = cols,
+#           removed = out$removed,
+#           missing_info = out$missing_info,
+#           diagnostics = out$diagnostics
+#         )
+#         minimal_idx[[length(minimal_idx) + 1L]] <- cols
+#         if (isTRUE(stop_at_first)) return(list(minimal_subsets = minimal))
+#       }
+#     }
+#   }
+#
+#   list(minimal_subsets = minimal)
+# }
+
   # === Minimal-subset search with pruning =====================================
-  minimal <- list()
+
+  # Early global check: if full set does not separate under `mode`,
+  # then no subset can separate under that `mode`.
+  full_res <- run_one(seq_len(p), mode)
+  if (!full_res$hit) {
+    return(list(minimal_subsets = list()))
+  }
+
+  minimal     <- list()
   minimal_idx <- list()
+
   contains_any_minimal <- function(cols) {
     if (!length(minimal_idx)) return(FALSE)
-    for (m in minimal_idx) if (all(m %in% cols)) return(TRUE)
+    for (m in minimal_idx) {
+      if (all(m %in% cols)) return(TRUE)
+    }
     FALSE
   }
 
-  for (k in seq.int(min_vars, max_vars)) {
-    cand <- combn(p, k, simplify = FALSE)
-    cand <- Filter(function(cols) !contains_any_minimal(cols), cand)
-    if (!length(cand)) next
-    for (cols in cand) {
-      out <- run_one(cols, mode)
+  # Track smallest subset size found so far; anything larger cannot be minimal
+  best_k <- Inf
+
+  # Optional evaluation limit to avoid pathological blowups
+  eval_count <- 0L
+  eval_limit <- getOption("latent_separation.eval_limit", Inf)
+
+  search_subset <- function(current, start) {
+    # current: vector of column indices already selected
+    # start:   next column index to consider
+
+    # Respect max_vars
+    k_cur <- length(current)
+    if (k_cur > max_vars) return()
+
+    # If we already found minimal subsets of size best_k,
+    # no need to explore larger sets
+    if (k_cur > best_k) return()
+
+    # If current set is long enough, evaluate it
+    if (k_cur >= min_vars) {
+      # prune if current already contains some known minimal subset
+      if (contains_any_minimal(current)) return()
+
+      eval_count <<- eval_count + 1L
+      if (eval_count > eval_limit) {
+        warning("Reached evaluation limit in minimal-subset search; results may be incomplete.")
+        return()
+      }
+
+      out <- run_one(current, mode)
       if (out$hit) {
-        nm <- paste(var_names[cols], collapse = "_")
-        minimal[[nm]] <- list(
-          type = out$type,
-          vars = var_names[cols],
-          idx  = cols,
-          removed = out$removed,
-          missing_info = out$missing_info,
-          diagnostics = out$diagnostics
+        nm <- paste(var_names[current], collapse = "_")
+        minimal[[nm]] <<- list(
+          type          = out$type,
+          vars          = var_names[current],
+          idx           = current,
+          removed       = out$removed,
+          missing_info  = out$missing_info,
+          diagnostics   = out$diagnostics
         )
-        minimal_idx[[length(minimal_idx) + 1L]] <- cols
-        if (isTRUE(stop_at_first)) return(list(minimal_subsets = minimal))
+        minimal_idx[[length(minimal_idx) + 1L]] <<- current
+        best_k <<- min(best_k, k_cur)
+
+        if (isTRUE(stop_at_first)) return(invisible(TRUE))
+        # Note: do not continue deeper from this branch,
+        # because any superset is not inclusion-minimal.
+        return()
       }
     }
+
+    # If we reached the end of variables, stop
+    if (start > p) return()
+
+    # Try adding each remaining variable, one by one
+    for (j in seq.int(start, p)) {
+      # Early prune: if current + j already contains any known minimal subset
+      idx_new <- c(current, j)
+      if (contains_any_minimal(idx_new)) next
+
+      res <- search_subset(idx_new, j + 1L)
+      # If stop_at_first triggered and returned TRUE, bubble up
+      if (identical(res, TRUE)) return(TRUE)
+    }
+
+    invisible(NULL)
   }
+
+  # Start the search from the empty set
+  search_subset(integer(0L), 1L)
 
   list(minimal_subsets = minimal)
 }
+

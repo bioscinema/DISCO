@@ -8,8 +8,9 @@ gt_latent_separation(
   res,
   title = "Latent Separation: Minimal Subsets",
   subtitle = NULL,
-  sort_by = c("type", "k", "n_used"),
-  show_rows_used = FALSE
+  sort_by = c("type_order", "K_relax_per_n", "k", "n_used"),
+  show_rows_used = FALSE,
+  digits = 3
 )
 }
 \arguments{
