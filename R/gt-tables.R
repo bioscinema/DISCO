@@ -186,6 +186,8 @@ tidy_latent_separation <- function(res) {
       NA_real_
     }
 
+    score_val <- if (!is.na(K_rel_norm)) 1 - K_rel_norm else NA_real_
+
     tibble::tibble(
       subset_name    = name,
       vars           = paste(item$vars %||% NA_character_, collapse = ", "),
@@ -195,6 +197,7 @@ tidy_latent_separation <- function(res) {
       #delta_hat      = as.numeric(di$delta_hat %||% NA_real_),
       K_relax        = as.numeric(K_rel %||% NA_real_),0,
       K_relax_per_n  = round(as.numeric(K_rel_norm),3),
+      score          = score_val,
       n              = as.integer(n_diag),
       missing_method = .to_titlecase(mi$method %||% NA_character_),
       impute_params  = .format_impute_params(mi$params %||% NULL),
@@ -299,7 +302,8 @@ gt_latent_separation <- function(
       k              = "# Of Predictors",
       Type           = "Separation",
       K_relax        = "K_relax",
-      K_relax_per_n  = "K_relax / n",
+      #K_relax_per_n  = "K_relax / n",
+      score          = "Score",
       n              = "n In LP",
       missing_method = "Missing Method",
       impute_params  = "Imputation Params",
@@ -314,23 +318,26 @@ gt_latent_separation <- function(
       decimals = 0
     ) |>
     # K_relax_per_n with decimals
+    # gt::fmt_number(
+    #   columns  = c(K_relax_per_n),
+    #   decimals = digits
+    # ) |>
     gt::fmt_number(
-      columns  = c(K_relax_per_n),
+      columns  = c(score),
       decimals = digits
-    ) |>
+    )|>
     gt::fmt_markdown(columns = c(Type)) |>
-    # more severe (small K_relax_per_n) in red
     gt::data_color(
-      columns = c(K_relax_per_n),
-      fn = function(x) .palette01_fn(1 - x)
-    ) |>
+      columns = c(score),
+      fn = .palette01_fn
+    )|>
     gt::tab_spanner(
       label   = "Subset",
       columns = c(subset_name, vars, k)
     ) |>
     gt::tab_spanner(
       label   = "Severity",
-      columns = c(K_relax, K_relax_per_n, n)
+      columns = c(K_relax, score, n)
     ) |>
     gt::tab_spanner(
       label   = "Missing-Data Handling",
