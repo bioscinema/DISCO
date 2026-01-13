@@ -4,102 +4,89 @@
 #' LP-based latent separation detection (with optional minimal-subset search)
 #'
 #' This function detects latent (complete or quasi-complete) separation for a
-#' binary outcome using **linear programming** in the *multivariate* space.
-#' It upgrades the classic feasibility-only LP check to a **two-stage** pipeline:
-#' (i) a **max-margin LP** with positive/negative split and an L1 *equality*
-#' normalization to identify **complete separation**; and (ii) a **severity LP**
-#' that computes a multivariate severity lower bound \eqn{K_relax}, i.e.,
-#' the minimal “boundary tie budget” (LP relaxation) needed to lift the **smallest
-#' margin** to a target \eqn{\delta} on the standardized scale. When
-#' \eqn{K_relax/n} is large (by default \eqn{\ge \rho=0.5}), quasi is treated as
-#' **non-substantive** and labeled **no separation** to avoid false positives.
+#' binary outcome using linear programming in the multivariate space.
+#' It uses a two-stage pipeline:
+#' (i) a max-margin LP with positive/negative split and an L1 equality
+#' normalization to identify complete separation; and (ii) a severity LP
+#' that computes a multivariate severity lower bound K_relax.
 #'
-#' The function keeps your previous interface and search utilities:
-#' - A single-set check (default).
-#' - Exhaustive subset testing (`test_combinations = TRUE`).
-#' - Minimal-subset search with pruning (`find_minimal = TRUE`).
+#' Quasi is treated as non-substantive and labeled no separation when
+#' K_relax / n is large (by default >= quasi_to_none_if = 0.5) to reduce
+#' false positives.
 #'
-#' It also preserves the legacy **row-deletion** diagnostic for quasi
-#' (indices of observations whose removal yields perfect separation),
-#' reported in `removed`, but **does not** drive the quasi decision alone.
+#' The function provides:
+#' - Single-set check (default).
+#' - Exhaustive subset testing (test_combinations = TRUE).
+#' - Minimal-subset search with pruning (find_minimal = TRUE).
+#'
+#' It also preserves the legacy row-deletion diagnostic for quasi (indices of
+#' observations whose removal yields perfect separation), reported in removed.
+#' This diagnostic does not drive the quasi decision.
+#'
+#' Progress and runtime control for minimal-subset search
+#' -----------------------------------------------------
+#' Minimal-subset search can be expensive because the number of candidate
+#' subsets grows combinatorially with p. You can control and monitor it using:
+#'
+#' - options(latent_separation.eval_limit = N)
+#'   Maximum number of subset evaluations in minimal search. If exceeded, the
+#'   search stops early and returns whatever has been found so far.
+#'
+#' - options(latent_separation.show_progress = TRUE/FALSE)
+#'   If TRUE, prints periodic progress updates during minimal search. If the
+#'   'progress' package is available, a progress bar is used. Otherwise, it
+#'   falls back to message() output.
+#'
+#' - options(latent_separation.progress_every = M)
+#'   Print or tick progress every M evaluated subsets (default 200).
+#'
+#' Examples:
+#'   options(latent_separation.show_progress = TRUE)
+#'   options(latent_separation.eval_limit = 50000)
+#'   options(latent_separation.progress_every = 200)
 #'
 #' @param y Binary outcome (0/1 or 2-level factor/character/logical).
 #' @param X Matrix or data frame of predictors (columns = variables).
-#' @param test_combinations If `TRUE`, test every subset of size ≥ `min_vars`
-#'   (legacy exhaustive mode).
+#' @param test_combinations If TRUE, test every subset of size >= min_vars.
 #' @param min_vars Minimum subset size to consider (default 2).
-#' @param epsilon Numeric scalar > 0. Legacy margin parameter for the old LP
-#'   feasibility; here it is used as the **default** for `eps_boundary`
-#'   (the target margin in the severity LP). Default `1e-5`.
+#' @param epsilon Numeric scalar > 0. Legacy margin parameter; used as default
+#'   for eps_boundary. Default 1e-5.
 #' @param only_perfect Legacy flag for exhaustive mode (kept for compatibility).
-#' @param find_minimal If `TRUE`, return inclusion-minimal separating subsets
+#' @param find_minimal If TRUE, return inclusion-minimal separating subsets
 #'   using pruning.
-#' @param mode One of `"either"`, `"perfect"`, or `"quasi"` – which kind of
-#'   separation to regard as a **hit**.
-#' @param max_vars Optional upper bound on subset size (default: all the way to p).
-#' @param stop_at_first If `TRUE` and `find_minimal=TRUE`, stop after the first
+#' @param mode One of "either", "perfect", or "quasi".
+#' @param max_vars Optional upper bound on subset size (default all the way to p).
+#' @param stop_at_first If TRUE and find_minimal=TRUE, stop after the first
 #'   minimal hit.
-#' @param missing How to treat missing data: `"complete"` (drop rows with NA in
-#'   the subset) or `"impute"` (impute predictors; never impute outcome).
-#' @param impute_args Optional list of imputation settings when
-#'   `missing = "impute"`. Recognized keys:
-#'   \itemize{
-#'     \item \code{numeric_method}: `"median"` (default) or `"mean"`
-#'     \item \code{categorical_method}: `"mode"` (default) or `"missing"`
-#'     \item \code{logical_method}: `"mode"` (default) or `"missing"`
-#'     \item \code{custom_fn}: function(data.frame) -> imputed data.frame
-#'   }
-#' @param scale_X Logical; if `TRUE`, standardize encoded predictors with base
-#'   \code{scale()} (default `TRUE`). Recommended `TRUE` when comparing
-#'   `K_relax` across datasets.
-#' @param tau_complete Numeric scalar > 0. Threshold on the **max-margin** value
-#'   to declare **complete separation** (Stage A). Default `1e-6` (after scaling).
-#' @param eps_boundary Numeric scalar > 0. Target margin \eqn{\delta} for the
-#'   **severity LP** used to compute \eqn{K_{relax}}. If `NULL`, defaults to
-#'   `1e-5`. Typical values on standardized features: `1e-3`–`1e-4`.
-#' @param quasi_to_none_if Numeric in (0,1]. If \eqn{K_relax \ge \rho n}, then
-#'   quasi is treated as **none** (non-substantive). Default `0.5`.
+#' @param missing How to treat missing data: "complete" or "impute".
+#' @param impute_args Optional list of imputation settings when missing="impute".
+#' @param scale_X Logical; if TRUE, standardize encoded predictors with scale().
+#' @param tau_complete Numeric scalar > 0. Threshold on max-margin delta_hat
+#'   to declare complete separation. Default 1e-6 (after scaling).
+#' @param eps_boundary Numeric scalar > 0. Target margin delta for severity LP.
+#'   If NULL, defaults to epsilon.
+#' @param quasi_to_none_if Numeric in (0,1]. If K_relax >= rho * n, quasi is
+#'   treated as none. Default 0.5.
 #'
 #' @return
-#' - **Single-set mode** (default): a list with fields
-#'   \itemize{
-#'     \item `type`: `"perfect separation"`, `"quasi-complete separation"`, or
-#'       `"no separation problem"`.
-#'     \item `satisfied`: logical, whether the requested `mode` is satisfied.
-#'     \item `available_types`: which types exist regardless of `mode`.
-#'     \item `removed`: (quasi only) integer indices of observations whose removal
-#'           yields perfect (diagnostic; not used for the decision).
-#'     \item `message`: human-readable message.
-#'     \item `missing_info`: list with missing-data handling metadata.
-#'     \item `diagnostics`: list with `delta_hat` (max-margin), `K_relax`, and `n`.
-#'   }
-#'
-#' - **Exhaustive mode** (`test_combinations=TRUE`): a named list of hits (by
-#'   concatenated variable names), each element containing
-#'   `{type, vars, removed, missing_info, diagnostics}`.
-#'
-#' - **Minimal-subset mode** (`find_minimal=TRUE`): a list with
-#'   `$minimal_subsets`, each entry `{type, vars, idx, removed, missing_info, diagnostics}`.
+#' - Single-set mode: list with fields type, satisfied, available_types,
+#'   removed, message, missing_info, diagnostics.
+#' - Exhaustive mode: named list of hits with type, vars, removed, missing_info,
+#'   diagnostics.
+#' - Minimal-subset mode: list with $minimal_subsets, each entry containing
+#'   type, vars, idx, removed, missing_info, diagnostics.
 #'
 #' @section Method (outline):
-#' Stage A (**max-margin LP**): maximize \eqn{\delta} subject to
-#' \eqn{y_i(\beta_0 + x_i^\top\beta) - \delta \ge 0} with
-#' \eqn{\beta = s^+ - s^-}, \eqn{s^\pm \ge 0}, and \eqn{\| \beta \|_1 = \mathbf{1}^\top(s^+ + s^-) = 1}.
-#' If \eqn{\hat\delta > \tau_\text{complete}}, declare **complete separation**.
+#' Stage A (max-margin LP): maximize delta subject to
+#' y_i(beta0 + x_i^T beta) - delta >= 0 with beta = s^+ - s^-,
+#' s^+, s^- >= 0, and ||beta||_1 = 1^T(s^+ + s^-) = 1.
+#' If delta_hat > tau_complete, declare complete separation.
 #'
-#' Stage B (**delta=0 feasibility**): check feasibility with \eqn{\delta=0} under
-#' the same normalization. If feasible, compute **multivariate severity**
-#' \eqn{K_\text{relax} = \lceil \sum_i t_i^\* / \delta \rceil} from the LP
-#' \eqn{\min \sum_i t_i} s.t. \eqn{y_i(\beta_0 + x_i^\top\beta) + t_i \ge \delta},
-#' \eqn{t_i \ge 0}, \eqn{\| \beta \|_1 = 1}. If \eqn{K_\text{relax} \ge \rho n}
-#' (with \eqn{\rho=\texttt{quasi\_to\_none\_if}}), treat quasi as **none**.
-#'
-#' @section Practical tips:
-#' - Use `scale_X = TRUE` (recommended) to stabilize thresholds and comparisons.
-#' - Sensitivity-check `eps_boundary` (e.g., `1e-4`–`1e-2`); `K_relax` increases
-#'   with larger target margins.
-#' - `quasi_to_none_if` controls how strict you are in down-weighting weak quasi.
-#'
+#' Stage B (delta=0 feasibility): check feasibility with delta=0 under the same
+#' normalization. If feasible, compute multivariate severity:
+#' K_relax = ceil(sum_i t_i^* / delta) from the LP
+#' min sum_i t_i subject to y_i(beta0 + x_i^T beta) + t_i >= delta, t_i >= 0,
+#' ||beta||_1 = 1. If K_relax >= rho n, treat quasi as none.
 #'
 #' @export
 latent_separation <- function(
@@ -123,6 +110,9 @@ latent_separation <- function(
   mode <- match.arg(mode)
   missing <- match.arg(missing)
   if (is.null(eps_boundary)) eps_boundary <- epsilon
+
+  # local "null coalescing" helper (so %||% always exists)
+  `%||%` <- function(a, b) if (!is.null(a)) a else b
 
   # coerce X to data.frame
   if (is.matrix(X)) {
@@ -154,13 +144,11 @@ latent_separation <- function(
     y
   }
 
-
   # --- internal helpers (rely on your own existing implementations) -----------
   # You already have:
   # - .handle_missing_for_subset(y, X, method, impute_args)
   # - encode_outcome(y)
   # - encode_predictors_lp(X)
-  # The function below assumes they are available in your package/environment.
 
   # Stage A: max delta (tp/tm + L1 equality)
   .lp_max_delta <- function(y01, X_int, tau_complete = 1e-6) {
@@ -264,7 +252,9 @@ latent_separation <- function(
   }
 
   # main per-subset runner (uses your missing+encoding utilities)
-  run_one <- function(cols, mode_local = mode) {
+  # NOTE: compute_removed is only used to optionally skip the legacy
+  # row-deletion diagnostic during minimal-subset search for speed.
+  run_one <- function(cols, mode_local = mode, compute_removed = TRUE) {
     mh <- .handle_missing_for_subset(y = y_raw, X = X_raw[, cols, drop = FALSE],
                                      method = missing, impute_args = impute_args)
 
@@ -310,7 +300,7 @@ latent_separation <- function(
 
     # legacy row-deletion diagnostic for quasi
     removed <- integer(0)
-    if (feas$feasible) {
+    if (isTRUE(compute_removed) && feas$feasible) {
       for (i in seq_len(n)) {
         yi <- y01[-i]
         Xi_i <- Xi[-i, , drop = FALSE]
@@ -390,7 +380,10 @@ latent_separation <- function(
                     paste(available, collapse = " & "),
                     if (isTRUE(only_perfect)) "perfect" else mode),
           missing_info = res$missing_info,
-          diagnostics = res$diagnostics %||% list(K_relax = NA_real_, n = length(res$missing_info$rows_used %||% integer())),
+          diagnostics = res$diagnostics %||% list(
+            K_relax = NA_real_,
+            n = length(res$missing_info$rows_used %||% integer())
+          ),
           vars_all = var_names,
           k_all = p
         ))
@@ -403,7 +396,10 @@ latent_separation <- function(
         message = if (!is.null(res$message)) res$message else
           "No separation problem detected.",
         missing_info = res$missing_info,
-        diagnostics = res$diagnostics %||% list(K_relax = NA_real_, n = length(res$missing_info$rows_used %||% integer())),
+        diagnostics = res$diagnostics %||% list(
+          K_relax = NA_real_,
+          n = length(res$missing_info$rows_used %||% integer())
+        ),
         vars_all = var_names,
         k_all = p
       ))
@@ -445,46 +441,27 @@ latent_separation <- function(
     return(results)
   }
 
-#   # === Minimal-subset search with pruning =====================================
-#   minimal <- list()
-#   minimal_idx <- list()
-#   contains_any_minimal <- function(cols) {
-#     if (!length(minimal_idx)) return(FALSE)
-#     for (m in minimal_idx) if (all(m %in% cols)) return(TRUE)
-#     FALSE
-#   }
-#
-#   for (k in seq.int(min_vars, max_vars)) {
-#     cand <- combn(p, k, simplify = FALSE)
-#     cand <- Filter(function(cols) !contains_any_minimal(cols), cand)
-#     if (!length(cand)) next
-#     for (cols in cand) {
-#       out <- run_one(cols, mode)
-#       if (out$hit) {
-#         nm <- paste(var_names[cols], collapse = "_")
-#         minimal[[nm]] <- list(
-#           type = out$type,
-#           vars = var_names[cols],
-#           idx  = cols,
-#           removed = out$removed,
-#           missing_info = out$missing_info,
-#           diagnostics = out$diagnostics
-#         )
-#         minimal_idx[[length(minimal_idx) + 1L]] <- cols
-#         if (isTRUE(stop_at_first)) return(list(minimal_subsets = minimal))
-#       }
-#     }
-#   }
-#
-#   list(minimal_subsets = minimal)
-# }
-
   # === Minimal-subset search with pruning =====================================
+  #
+  # IMPORTANT: Per your request, the perfect/quasi decision logic is unchanged.
+  # Only the minimal-subset search procedure is updated to:
+  # - show progress (optional via options)
+  # - enforce an evaluation limit (options)
+  # - speed up search by skipping removed-diagnostic during search, then
+  #   recomputing removed only for the final returned minimal subsets
+  #
+  # Semantics remain consistent with your previous minimal-subset behavior:
+  # - best_k pruning is retained (once a hit at size k is found, larger sizes
+  #   are not explored, so results focus on minimal size).
+  #
 
   # Early global check: if full set does not separate under `mode`,
   # then no subset can separate under that `mode`.
   full_res <- run_one(seq_len(p), mode)
   if (!full_res$hit) {
+    if (isTRUE(getOption("latent_separation.show_progress", FALSE))) {
+      message("minimal search: stopped early because full predictor set is not a hit under the requested mode; returning empty.")
+    }
     return(list(minimal_subsets = list()))
   }
 
@@ -499,77 +476,96 @@ latent_separation <- function(
     FALSE
   }
 
-  # Track smallest subset size found so far; anything larger cannot be minimal
   best_k <- Inf
 
-  # Optional evaluation limit to avoid pathological blowups
+  # Evaluation limit and progress controls (via options)
   eval_count <- 0L
   eval_limit <- getOption("latent_separation.eval_limit", Inf)
+  show_progress <- isTRUE(getOption("latent_separation.show_progress", FALSE))
+  progress_every <- as.integer(getOption("latent_separation.progress_every", 200L))
+  if (is.na(progress_every) || progress_every <= 0L) progress_every <- 200L
 
-  search_subset <- function(current, start) {
-    # current: vector of column indices already selected
-    # start:   next column index to consider
-
-    # Respect max_vars
-    k_cur <- length(current)
-    if (k_cur > max_vars) return()
-
-    # If we already found minimal subsets of size best_k,
-    # no need to explore larger sets
-    if (k_cur > best_k) return()
-
-    # If current set is long enough, evaluate it
-    if (k_cur >= min_vars) {
-      # prune if current already contains some known minimal subset
-      if (contains_any_minimal(current)) return()
-
-      eval_count <<- eval_count + 1L
-      if (eval_count > eval_limit) {
-        warning("Reached evaluation limit in minimal-subset search; results may be incomplete.")
-        return()
-      }
-
-      out <- run_one(current, mode)
-      if (out$hit) {
-        nm <- paste(var_names[current], collapse = "_")
-        minimal[[nm]] <<- list(
-          type          = out$type,
-          vars          = var_names[current],
-          idx           = current,
-          removed       = out$removed,
-          missing_info  = out$missing_info,
-          diagnostics   = out$diagnostics
-        )
-        minimal_idx[[length(minimal_idx) + 1L]] <<- current
-        best_k <<- min(best_k, k_cur)
-
-        if (isTRUE(stop_at_first)) return(invisible(TRUE))
-        # Note: do not continue deeper from this branch,
-        # because any superset is not inclusion-minimal.
-        return()
-      }
+  # Optional progress bar using 'progress' package if available
+  pb <- NULL
+  use_bar <- FALSE
+  if (show_progress && requireNamespace("progress", quietly = TRUE)) {
+    if (is.finite(eval_limit) && eval_limit > 0L) {
+      use_bar <- TRUE
+      pb <- progress::progress_bar$new(
+        format = "  minimal search [:bar] :current/:total | hits=:hits | best_k=:bestk | elapsed=:elapsed",
+        total = as.integer(eval_limit),
+        clear = FALSE,
+        width = 80
+      )
     }
+  }
 
-    # If we reached the end of variables, stop
-    if (start > p) return()
+  hits_count <- 0L
+  tick_progress <- function() {
+    if (!show_progress) return(invisible(NULL))
 
-    # Try adding each remaining variable, one by one
-    for (j in seq.int(start, p)) {
-      # Early prune: if current + j already contains any known minimal subset
-      idx_new <- c(current, j)
-      if (contains_any_minimal(idx_new)) next
-
-      res <- search_subset(idx_new, j + 1L)
-      # If stop_at_first triggered and returned TRUE, bubble up
-      if (identical(res, TRUE)) return(TRUE)
+    if (!is.null(pb)) {
+      # progress bar: total == eval_limit
+      # tick exactly once per evaluation, but do not exceed total
+      if (eval_count <= eval_limit) {
+        pb$tick(tokens = list(
+          hits = hits_count,
+          bestk = if (is.finite(best_k)) best_k else "Inf"
+        ))
+      }
+    } else if (eval_count %% progress_every == 0L) {
+      message(sprintf("minimal search: evaluated=%d, hits=%d, best_k=%s",
+                      eval_count, hits_count,
+                      if (is.finite(best_k)) best_k else "Inf"))
     }
 
     invisible(NULL)
   }
 
-  # Start the search from the empty set
-  search_subset(integer(0L), 1L)
+
+  # Search by subset size (increasing), while retaining your best_k pruning.
+  # Once best_k is set, we stop exploring larger k.
+  for (k in seq.int(min_vars, max_vars)) {
+    if (k > best_k) break
+
+    for (cols in combn(p, k, simplify = FALSE)) {
+      if (contains_any_minimal(cols)) next
+
+      eval_count <- eval_count + 1L
+      if (eval_count > eval_limit) {
+        warning("Reached evaluation limit in minimal-subset search; results may be incomplete.")
+        break
+      }
+      tick_progress()
+
+      # During search, skip removed diagnostic (does not affect hit decision)
+      out_fast <- run_one(cols, mode, compute_removed = FALSE)
+      if (!isTRUE(out_fast$hit)) next
+
+      best_k <- min(best_k, k)
+      hits_count <- hits_count + 1L
+
+      # Recompute full output for this subset (including removed)
+      out <- run_one(cols, mode, compute_removed = TRUE)
+
+      nm <- paste(var_names[cols], collapse = "_")
+      minimal[[nm]] <- list(
+        type          = out$type,
+        vars          = var_names[cols],
+        idx           = cols,
+        removed       = out$removed,
+        missing_info  = out$missing_info,
+        diagnostics   = out$diagnostics
+      )
+      minimal_idx[[length(minimal_idx) + 1L]] <- cols
+
+      if (isTRUE(stop_at_first)) {
+        return(list(minimal_subsets = minimal))
+      }
+    }
+
+    if (eval_count > eval_limit) break
+  }
 
   list(minimal_subsets = minimal)
 }
-
