@@ -69,9 +69,9 @@ lat$missing_info   # method, params, rows_used, n_used
 
 # Search for inclusion-minimal separating subsets (pruned search)
 # Optional: progress and runtime cap for minimal-subset search
-options(latent_separation.show_progress = TRUE)
-options(latent_separation.progress_every = 200)
-options(latent_separation.eval_limit = 10000000)
+options(latent_separation.show_progress = TRUE) # enables progress reporting during the minimal subset search.
+options(latent_separation.progress_every = 200) # if a progress bar is not available, prints a message every 200 evaluated subsets.
+options(latent_separation.eval_limit = 10000000) # caps the total number of evaluated subsets to avoid running indefinitely.
 
 lat_min <- latent_separation(
   y, X,
