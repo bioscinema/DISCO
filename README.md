@@ -61,22 +61,23 @@ X <- cbind(
   X1 = c(-1.86, -0.81, 1.32, -0.40, 0.91, 2.49, 0.34, 0.25),
   X2 = c( 0.52,  1.07, 0.60,  0.67,-1.39, 0.16,-1.40,-0.09)
 )
-lat <- latent_separation(y, X, missing = "complete")  # scale_X = FALSE by default
+lat <- latent_separation(y, X, missing = "complete")
 lat$type           # "Perfect separation" | "Quasi-complete separation" | "No separation problem"
 lat$message        # human-readable summary
 lat$removed        # for quasi: variables whose removal yields perfect (else NULL)
 lat$missing_info   # method, params, rows_used, n_used
 
-# Optional: enable z-score scaling of the encoded predictors
-lat_scaled <- latent_separation(y, X, missing = "complete", scale_X = TRUE)
-
 # Search for inclusion-minimal separating subsets (pruned search)
+# Optional: progress and runtime cap for minimal-subset search
+options(latent_separation.show_progress = TRUE)
+options(latent_separation.progress_every = 200)
+options(latent_separation.eval_limit = 10000000)
+
 lat_min <- latent_separation(
   y, X,
   find_minimal   = TRUE,
   min_vars       = 2,              # smallest subset size to consider
-  max_vars       = ncol(X),        # largest subset size (default is all)
-  stop_at_first  = FALSE
+  max_vars       = ncol(X)        # largest subset size (default is all)
 )
 names(lat_min$minimal_subsets)     # e.g., "X1", "X2", "X1_X2"
 one <- lat_min$minimal_subsets[[1]]
@@ -84,6 +85,7 @@ one$type          # "Perfect separation" or "Quasi-complete separation"
 one$vars          # variables in the subset
 one$removed       # for quasi-only; variables whose removal yields perfect
 one$missing_info  # rows used, etc.
+
 ```
 
 ### Missing-Data Handling
