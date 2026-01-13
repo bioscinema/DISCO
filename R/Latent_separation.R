@@ -389,7 +389,10 @@ latent_separation <- function(
             sprintf("Separation exists (%s), but it does not satisfy mode = \"%s\".",
                     paste(available, collapse = " & "),
                     if (isTRUE(only_perfect)) "perfect" else mode),
-          missing_info = res$missing_info
+          missing_info = res$missing_info,
+          diagnostics = res$diagnostics %||% list(K_relax = NA_real_, n = length(res$missing_info$rows_used %||% integer())),
+          vars_all = var_names,
+          k_all = p
         ))
       }
 
@@ -399,7 +402,10 @@ latent_separation <- function(
         available_types = character(0),
         message = if (!is.null(res$message)) res$message else
           "No separation problem detected.",
-        missing_info = res$missing_info
+        missing_info = res$missing_info,
+        diagnostics = res$diagnostics %||% list(K_relax = NA_real_, n = length(res$missing_info$rows_used %||% integer())),
+        vars_all = var_names,
+        k_all = p
       ))
     }
 

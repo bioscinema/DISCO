@@ -42,16 +42,31 @@ if (!exists("%||%")) {
 }
 
 # Palette function for gt::data_color(fn = ...)
+# .palette01_fn <- function(x) {
+#   pal <- grDevices::colorRampPalette(c("#e8f5e9", "#fff59d", "#ef9a9a"))(101)
+#   if (length(x) == 0) return(character(0))
+#   x_clamp <- pmin(pmax(x, 0), 1)
+#   idx <- ifelse(is.na(x_clamp), NA_integer_, as.integer(round(x_clamp * 100)) + 1L)
+#   out <- rep(NA_character_, length(x))
+#   ok <- !is.na(idx)
+#   out[ok] <- pal[idx[ok]]
+#   out
+# }
 .palette01_fn <- function(x) {
   pal <- grDevices::colorRampPalette(c("#e8f5e9", "#fff59d", "#ef9a9a"))(101)
   if (length(x) == 0) return(character(0))
+
+  # Set grey to NA
+  out <- rep("#f2f2f2", length(x))
+
   x_clamp <- pmin(pmax(x, 0), 1)
   idx <- ifelse(is.na(x_clamp), NA_integer_, as.integer(round(x_clamp * 100)) + 1L)
-  out <- rep(NA_character_, length(x))
+
   ok <- !is.na(idx)
   out[ok] <- pal[idx[ok]]
   out
 }
+
 
 # Build a compact "Rows Used" preview string
 .rows_used_string <- function(v, show_rows_used = FALSE) {
@@ -190,12 +205,12 @@ tidy_latent_separation <- function(res) {
 
     tibble::tibble(
       subset_name    = name,
-      vars           = paste(item$vars %||% NA_character_, collapse = ", "),
-      k              = length(item$vars %||% character()),
+      vars           = if (is.null(item$vars)) "All predictors" else paste(item$vars, collapse = ", "), #paste(item$vars %||% NA_character_, collapse = ", "),
+      k              = if (is.null(item$vars)) NA_integer_ else length(item$vars), #length(item$vars %||% character()),
       type           = item$type %||% res$type %||% NA_character_,
       removed        = paste(item$removed %||% character(), collapse = ", "),
       #delta_hat      = as.numeric(di$delta_hat %||% NA_real_),
-      K_relax        = as.numeric(K_rel %||% NA_real_),0,
+      K_relax        = as.numeric(K_rel %||% NA_real_),#0,
       K_relax_per_n  = round(as.numeric(K_rel_norm),3),
       score          = score_val,
       n              = as.integer(n_diag),
@@ -327,6 +342,7 @@ gt_latent_separation <- function(
       decimals = digits
     )|>
     gt::fmt_markdown(columns = c(Type)) |>
+    gt::sub_missing(columns = c(score), missing_text = "No separation") |>
     gt::data_color(
       columns = c(score),
       fn = .palette01_fn
@@ -428,9 +444,9 @@ gt_uni_separation_all <- function(
   # Decorate
   df$Type <- vapply(df$type, .type_icon, character(1))
   df$type_order <- dplyr::case_when(
-    grepl("^Perfect", df$type) ~ 1L,
-    grepl("^Quasi",   df$type) ~ 2L,
-    grepl("^No ",     df$type) ~ 3L,
+    grepl("^Perfect", df$type, ignore.case = TRUE) ~ 1L,
+    grepl("^Quasi",   df$type, ignore.case = TRUE) ~ 2L,
+    grepl("^No ",     df$type, ignore.case = TRUE) ~ 3L,
     TRUE ~ 9L
   )
 
