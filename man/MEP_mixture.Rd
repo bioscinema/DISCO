@@ -11,6 +11,7 @@ MEP_mixture(
   impute_args = list(),
   n_iter_grid = 10000,
   burn_in_grid = 1000,
+  init_beta = 0.01,
   step_size = 0.4,
   mu_intercept_offsets = seq(-1, 1, by = 0.2),
   sigma0_intercept = 10,
@@ -26,7 +27,9 @@ MEP_mixture(
   transform_back = c("none", "logit", "SAS", "Long"),
   ci_level = 0.95,
   seed = NULL,
-  return_draws = FALSE
+  return_draws = FALSE,
+  ess_threshold = 150,
+  geweke_z_threshold = 2
 )
 }
 \arguments{
@@ -46,6 +49,8 @@ to both modeling and severity diagnostics (shared rows/values). Default \code{"c
 \item{n_iter_grid}{Integer; MH iterations per grid point (including burn-in). Default \code{10000}.}
 
 \item{burn_in_grid}{Integer; burn-in iterations per grid point. Default \code{1000}.}
+
+\item{init_beta}{Initial value(s) for the MH chain. Default \code{0.01}.}
 
 \item{step_size}{Proposal standard deviation for RW–MH. Default \code{0.40}.}
 
@@ -92,6 +97,12 @@ computed as \eqn{\beta^{\mathrm{std}}/s_x}.
 
 \item{return_draws}{Logical; if \code{TRUE}, return the post-burn MH chain for the
 selected grid run.}
+
+\item{ess_threshold}{Numeric; minimum effective sample size (ESS) required (across all
+parameters) to declare convergence when \code{coda} is available. Default \code{150}.}
+
+\item{geweke_z_threshold}{Numeric; maximum allowed absolute Geweke z-score (across all
+parameters) to declare convergence when \code{coda} is available. Default \code{2}.}
 }
 \value{
 A list with components:

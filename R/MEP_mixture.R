@@ -59,6 +59,7 @@
 #'
 #' @param n_iter_grid Integer; MH iterations per grid point (including burn-in). Default `10000`.
 #' @param burn_in_grid Integer; burn-in iterations per grid point. Default `1000`.
+#' @param init_beta Initial value(s) for the MH chain. Default `0.01`.
 #' @param step_size Proposal standard deviation for RW–MH. Default `0.40`.
 #'
 #' @param mu_intercept_offsets Numeric vector of offsets added to \eqn{\mathrm{logit}(\bar{y})}
@@ -93,6 +94,11 @@
 #' @param seed Optional integer; if provided, sets RNG seed for reproducibility.
 #' @param return_draws Logical; if `TRUE`, return the post-burn MH chain for the
 #'          selected grid run.
+#' @param ess_threshold Numeric; minimum effective sample size (ESS) required (across all
+#'        parameters) to declare convergence when `coda` is available. Default `150`.
+#' @param geweke_z_threshold Numeric; maximum allowed absolute Geweke z-score (across all
+#'        parameters) to declare convergence when `coda` is available. Default `2`.
+
 #'
 #' @return A list with components:
 #' \itemize{
@@ -239,6 +245,7 @@ MEP_mixture <- function(
     impute_args = list(),
     n_iter_grid = 10000,
     burn_in_grid = 1000,
+    init_beta = 0.01,
     step_size = 0.40,
     mu_intercept_offsets = seq(-1, 1, by = 0.2),
     sigma0_intercept = 10,
@@ -254,16 +261,21 @@ MEP_mixture <- function(
     transform_back = c("none","logit","SAS","Long"),
     ci_level = 0.95,
     seed = NULL,
-    return_draws = FALSE
+    return_draws = FALSE,
+    ess_threshold = 150,
+    geweke_z_threshold = 2
 ) {
+
   `%||%` <- function(a, b) if (!is.null(a)) a else b
 
   impute_frame <- function(df, args = list()) {
     num_method <- tolower(args$numeric_method %||% "median")
     fac_method <- tolower(args$factor_method  %||% "mode")
+
     for (nm in names(df)) {
       v <- df[[nm]]
       if (is.character(v) || is.logical(v)) v <- as.factor(v)
+
       if (is.numeric(v)) {
         if (anyNA(v)) {
           fill <- if (identical(num_method, "mean")) mean(v, na.rm = TRUE) else stats::median(v, na.rm = TRUE)
@@ -291,8 +303,10 @@ MEP_mixture <- function(
 
   scale_if_num <- function(v) if (is.numeric(v)) as.numeric(scale(v)) else v
 
-  missing <- match.arg(missing)
-  transform_back <- match.arg(transform_back)
+  # robust match.arg
+  missing <- base::match.arg(as.character(missing), choices = c("complete","impute"))
+  transform_back <- base::match.arg(as.character(transform_back), choices = c("none","logit","SAS","Long"))
+
   if (!is.null(seed)) set.seed(as.integer(seed))
 
   # normalize y
@@ -301,6 +315,7 @@ MEP_mixture <- function(
     else if (is.factor(y) || is.character(y)) y <- as.integer(factor(y)) - 1L
     else stop("`y` must be numeric 0/1, logical, or 2-level factor/character.", call. = FALSE)
   }
+  y <- as.numeric(y)
 
   # data prep (shared for modeling & DISCO)
   X_df <- as.data.frame(X, stringsAsFactors = TRUE)
@@ -308,12 +323,15 @@ MEP_mixture <- function(
 
   if (missing == "complete") {
     idx <- stats::complete.cases(data.frame(y = y, X_df, check.names = FALSE))
-    y <- y[idx]; X_df <- X_df[idx, , drop = FALSE]
-  } else { # "impute"
+    y <- y[idx]
+    X_df <- X_df[idx, , drop = FALSE]
+  } else {
     keep <- !is.na(y)
-    y <- y[keep]; X_df <- X_df[keep, , drop = FALSE]
+    y <- y[keep]
+    X_df <- X_df[keep, , drop = FALSE]
     X_df <- impute_frame(X_df, impute_args)
   }
+
   if (ncol(X_df) < 1L) stop("X must have at least one predictor.", call. = FALSE)
   if (length(y) < 2L || length(unique(y)) < 2L) stop("Outcome must contain both 0 and 1 after missing handling.", call. = FALSE)
 
@@ -347,14 +365,17 @@ MEP_mixture <- function(
   if (is.null(ref)) {
     ref_idx_term <- which.max(sev_vec)
   } else if (is.character(ref)) {
-    ref_idx_term <- match(ref, term_labs); if (is.na(ref_idx_term)) stop("`ref` not found in colnames(X).", call. = FALSE)
+    ref_idx_term <- match(ref, term_labs)
+    if (is.na(ref_idx_term)) stop("`ref` not found in colnames(X).", call. = FALSE)
   } else {
-    ref_idx_term <- as.integer(ref); if (ref_idx_term < 1 || ref_idx_term > p_terms) stop("`ref` index out of range.", call. = FALSE)
+    ref_idx_term <- as.integer(ref)
+    if (ref_idx_term < 1 || ref_idx_term > p_terms) stop("`ref` index out of range.", call. = FALSE)
   }
+
   ref_name <- term_labs[ref_idx_term]
   ref_enc_cols <- which(assign_mm == ref_idx_term)
   if (!length(ref_enc_cols)) stop("Internal: no encoded columns for selected `ref` predictor.", call. = FALSE)
-  ref_pos_enc <- 1 + ref_enc_cols[1]
+  ref_pos_enc <- 1 + ref_enc_cols[1]  # position in beta including intercept
 
   # map severity -> anchor sigma/kappa
   map_uni_severity <- function(s, sigma_hi, sigma_lo, kappa_min, kappa_max) {
@@ -363,16 +384,24 @@ MEP_mixture <- function(
     kappa_anchor <- kappa_min + s * (kappa_max - kappa_min)
     list(sigma = sigma, kappa_anchor = kappa_anchor)
   }
-  anchors <- lapply(sev_vec, map_uni_severity,
-                    sigma_hi = sigma_hi, sigma_lo = sigma_lo,
-                    kappa_min = kappa_min, kappa_max = kappa_max)
+
+  anchors <- lapply(
+    sev_vec, map_uni_severity,
+    sigma_hi = sigma_hi, sigma_lo = sigma_lo,
+    kappa_min = kappa_min, kappa_max = kappa_max
+  )
   sigma_anchor_terms <- vapply(anchors, function(a) a$sigma, numeric(1))
   kappa_anchor_mean  <- mean(vapply(anchors, function(a) a$kappa_anchor, numeric(1)))
   sigma_anchor_enc <- sigma_anchor_terms[assign_mm]
 
   # grids
   mu0 <- stats::qlogis(pmin(pmax(mean(y), 1e-6), 1 - 1e-6))
-  mu_grid <- lapply(mu_intercept_offsets, function(off) { v <- numeric(1 + p_enc); v[1] <- mu0 + off; v })
+  mu_grid <- lapply(mu_intercept_offsets, function(off) {
+    v <- numeric(1 + p_enc)
+    v[1] <- mu0 + off
+    v
+  })
+
   build_sigma_diag <- function(global_mult = 1.0, sigma0_intercept = 10) {
     d <- c(sigma0_intercept, pmax(1e-6, sigma_anchor_enc * global_mult))
     diag(d, nrow = 1 + p_enc, ncol = 1 + p_enc)
@@ -380,40 +409,68 @@ MEP_mixture <- function(
   sigma_grid <- lapply(sigma_global_multipliers, build_sigma_diag, sigma0_intercept = sigma0_intercept)
   kappa_grid <- pmax(0.5, pmin(3.0, kappa_anchor_mean + kappa_delta))
 
-  # MH on standardized encoded design
-  run_MH_sampler <- function(n_iter, init_beta, step_size, X_enc, y, mu, Sigma, kappa, burn_in = 1000, transform_back, ci_level) {
+  run_MH_sampler <- function(
+    n_iter, init_beta, step_size, X_enc, y, mu, Sigma, kappa,
+    burn_in = 1000, transform_back, ci_level, ess_threshold, geweke_z_threshold
+  ) {
     Xstd <- scale(X_enc)
     X <- cbind(Intercept = 1, Xstd)
+
     Sigma_inv <- solve(Sigma)
+
     log_post <- function(beta) {
       eta <- as.vector(X %*% beta)
       pr  <- 1 / (1 + exp(-eta))
       loglik <- sum(y * log(pmax(pr, 1e-12)) + (1 - y) * log(pmax(1 - pr, 1e-12)))
+
       diff <- beta - mu
       qf   <- as.numeric(t(diff) %*% Sigma_inv %*% diff)
       logprior <- -0.5 * (qf^kappa)
+
       loglik + logprior
     }
+
     p_all <- ncol(X)
-    chain <- matrix(0, n_iter, p_all); chain[1, ] <- rep(0.01, p_all)
-    cur_lp <- log_post(chain[1, ]); acc <- 0L
+    chain <- matrix(0, n_iter, p_all)
+
+    if (length(init_beta) == 1L) {
+      init_vec <- rep(as.numeric(init_beta), p_all)
+    } else if (length(init_beta) == p_all) {
+      init_vec <- as.numeric(init_beta)
+    } else {
+      stop("`init_beta` must be a scalar or a numeric vector of length (1 + p_enc).", call. = FALSE)
+    }
+
+    chain[1, ] <- init_vec
+    cur_lp <- log_post(chain[1, ])
+    acc <- 0L
+    cur_step <- step_size
+
     for (t in 2:n_iter) {
-      prop <- chain[t - 1, ] + step_size * rnorm(p_all)
+      prop <- chain[t - 1, ] + cur_step * rnorm(p_all)
       prop_lp <- log_post(prop)
+
       if (log(runif(1)) < (prop_lp - cur_lp)) {
-        chain[t, ] <- prop; cur_lp <- prop_lp; acc <- acc + 1L
-      } else chain[t, ] <- chain[t - 1, ]
+        chain[t, ] <- prop
+        cur_lp <- prop_lp
+        acc <- acc + 1L
+      } else {
+        chain[t, ] <- chain[t - 1, ]
+      }
+
       if (t <= burn_in && (t %% 1000) == 0) {
         ar <- acc / t
-        if (ar > 0.45) step_size <- step_size * 1.10
-        if (ar < 0.20) step_size <- step_size * 0.90
+        if (ar > 0.45) cur_step <- cur_step * 1.10
+        if (ar < 0.20) cur_step <- cur_step * 0.90
       }
     }
+
     post <- chain[(burn_in + 1):n_iter, , drop = FALSE]
     pm   <- colMeans(post)
 
-    # CIs
-    qlo <- (1 - ci_level) / 2; qhi <- 1 - qlo
+    # CIs helper
+    qlo <- (1 - ci_level) / 2
+    qhi <- 1 - qlo
     qfun <- function(M) t(apply(M, 2, stats::quantile, probs = c(qlo, qhi), na.rm = TRUE))
 
     # standardized slopes (drop intercept)
@@ -422,44 +479,67 @@ MEP_mixture <- function(
     scaled_ci    <- qfun(draws_scaled)
 
     # back-transforms for encoded columns (draw-by-draw)
-    s_x <- apply(X_enc, 2, stats::sd); s_x[!is.finite(s_x) | s_x == 0] <- 1
+    s_x <- apply(X_enc, 2, stats::sd)
+    s_x[!is.finite(s_x) | s_x == 0] <- 1
     draws_logit <- sweep(draws_scaled, 2, s_x, "/")
+
     logit_sd <- pi / sqrt(3)
     draws_SAS  <- draws_logit * logit_sd
     draws_Long <- draws_logit * (logit_sd + 1)
 
-    # per-encoded-column effects table (means + CIs)
+    # effects table (scaled)
     effects <- data.frame(
       Predictor      = colnames(X_enc),
       Scaled         = scaled_mean,
       Scaled_CI_low  = scaled_ci[, 1],
       Scaled_CI_high = scaled_ci[, 2],
-      row.names = NULL, check.names = FALSE
+      row.names = NULL,
+      check.names = FALSE
     )
+
+    # star on scaled
+    effects$sig_scaled <- with(
+      effects,
+      (Scaled_CI_low > 0 & Scaled_CI_high > 0) | (Scaled_CI_low < 0 & Scaled_CI_high < 0)
+    )
+    effects$star_scaled <- ifelse(effects$sig_scaled, "*", "")
+
+    # attach one chosen back-transform trio, and stars on that scale too
+    bt_means <- list(
+      logit = colMeans(draws_logit),
+      SAS   = colMeans(draws_SAS),
+      Long  = colMeans(draws_Long)
+    )
+
     if (transform_back == "logit") {
       ci_bt <- qfun(draws_logit)
-      effects$b_logit_original <- colMeans(draws_logit)
+      effects$b_logit_original <- bt_means$logit
       effects$b_logit_CI_low   <- ci_bt[, 1]
       effects$b_logit_CI_high  <- ci_bt[, 2]
+      effects$sig_original <- (effects$b_logit_CI_low > 0 & effects$b_logit_CI_high > 0) |
+        (effects$b_logit_CI_low < 0 & effects$b_logit_CI_high < 0)
+      effects$star_original <- ifelse(effects$sig_original, "*", "")
     } else if (transform_back == "SAS") {
       ci_bt <- qfun(draws_SAS)
-      effects$b_SAS_original <- colMeans(draws_SAS)
+      effects$b_SAS_original <- bt_means$SAS
       effects$b_SAS_CI_low   <- ci_bt[, 1]
       effects$b_SAS_CI_high  <- ci_bt[, 2]
+      effects$sig_original <- (effects$b_SAS_CI_low > 0 & effects$b_SAS_CI_high > 0) |
+        (effects$b_SAS_CI_low < 0 & effects$b_SAS_CI_high < 0)
+      effects$star_original <- ifelse(effects$sig_original, "*", "")
     } else if (transform_back == "Long") {
       ci_bt <- qfun(draws_Long)
-      effects$b_Long_original <- colMeans(draws_Long)
+      effects$b_Long_original <- bt_means$Long
       effects$b_Long_CI_low   <- ci_bt[, 1]
       effects$b_Long_CI_high  <- ci_bt[, 2]
+      effects$sig_original <- (effects$b_Long_CI_low > 0 & effects$b_Long_CI_high > 0) |
+        (effects$b_Long_CI_low < 0 & effects$b_Long_CI_high < 0)
+      effects$star_original <- ifelse(effects$sig_original, "*", "")
     }
 
-    # mean-based vectors for ratio reporting
-    b_logit_mean <- colMeans(draws_logit)
-    b_SAS_mean   <- colMeans(draws_SAS)
-    b_Long_mean  <- colMeans(draws_Long)
-
     # posterior predictive check
-    n_rep <- nrow(post); n_obs <- nrow(X)
+    n_rep <- nrow(post)
+    n_obs <- nrow(X)
     y_rep <- matrix(0, nrow = n_rep, ncol = n_obs)
     for (i in seq_len(n_rep)) {
       pr_i <- 1 / (1 + exp(-(X %*% post[i, ])))
@@ -469,13 +549,41 @@ MEP_mixture <- function(
     prop_matched <- mean(p_match >= 0.80, na.rm = TRUE)
     if (!is.finite(prop_matched)) prop_matched <- 0
 
+    # convergence diagnostics (single-chain; optional)
+    ess <- rep(NA_real_, ncol(post))
+    geweke_z <- rep(NA_real_, ncol(post))
+    converged_flag <- NA
+    ess_min <- NA_real_
+    geweke_max_abs <- NA_real_
+
+    if (requireNamespace("coda", quietly = TRUE)) {
+      mcmc_obj <- coda::mcmc(post)
+      ess <- as.numeric(coda::effectiveSize(mcmc_obj))
+      gz  <- coda::geweke.diag(mcmc_obj)$z
+      geweke_z <- as.numeric(gz)
+
+      ess_min <- suppressWarnings(min(ess, na.rm = TRUE))
+      geweke_max_abs <- suppressWarnings(max(abs(geweke_z), na.rm = TRUE))
+
+      ess_ok <- is.finite(ess_min) && ess_min >= ess_threshold
+      geweke_ok <- is.finite(geweke_max_abs) && geweke_max_abs <= geweke_z_threshold
+      converged_flag <- isTRUE(ess_ok && geweke_ok)
+    }
+
     list(
       chain = post,
       pm = pm,
       effects = effects,
-      bt = list(logit = b_logit_mean, SAS = b_SAS_mean, Long = b_Long_mean),
+      bt = bt_means,
       prop_matched = prop_matched,
-      acceptance_rate = acc / (n_iter - 1)
+      acceptance_rate = acc / (n_iter - 1),
+      diagnostics = list(
+        ess = ess,
+        geweke_z = geweke_z,
+        ess_min = ess_min,
+        geweke_max_abs = geweke_max_abs,
+        converged = converged_flag
+      )
     )
   }
 
@@ -488,18 +596,24 @@ MEP_mixture <- function(
     acceptance_rate = numeric(),
     prop_matched = numeric(),
     posterior_ratio_std = character(),
+    converged = logical(),
+    ess_min = numeric(),
+    geweke_max_abs = numeric(),
     stringsAsFactors = FALSE
   )
-  runs <- list(); gid <- 1L
+
+  runs <- list()
+  gid <- 1L
 
   for (mu in mu_grid) {
     mu_str <- paste(round(mu, 3), collapse = ", ")
     for (Sigma in sigma_grid) {
       sigma_str <- paste(round(diag(Sigma), 3), collapse = ", ")
       for (kappa in kappa_grid) {
+
         res <- run_MH_sampler(
           n_iter = n_iter_grid,
-          init_beta = rep(0.01, 1 + p_enc),
+          init_beta = init_beta,
           step_size = step_size,
           X_enc = X_mm,
           y = y,
@@ -508,13 +622,24 @@ MEP_mixture <- function(
           kappa = kappa,
           burn_in = burn_in_grid,
           transform_back = transform_back,
-          ci_level = ci_level
+          ci_level = ci_level,
+          ess_threshold = ess_threshold,
+          geweke_z_threshold = geweke_z_threshold
         )
+
         vals <- res$pm
         num_idx <- setdiff(2:(1 + p_enc), ref_pos_enc)
-        ratio_std_str <- if (length(num_idx) && is.finite(vals[ref_pos_enc]) && abs(vals[ref_pos_enc]) > 1e-12) {
+
+        ratio_std_str <- if (length(num_idx) &&
+                             is.finite(vals[ref_pos_enc]) && abs(vals[ref_pos_enc]) > 1e-12) {
           paste(round(vals[num_idx] / vals[ref_pos_enc], 3), collapse = ", ")
-        } else NA_character_
+        } else {
+          NA_character_
+        }
+
+        conv_val <- if (!is.null(res$diagnostics$converged)) res$diagnostics$converged else NA
+        ess_min_val <- if (!is.null(res$diagnostics$ess_min)) res$diagnostics$ess_min else NA_real_
+        geweke_max_val <- if (!is.null(res$diagnostics$geweke_max_abs)) res$diagnostics$geweke_max_abs else NA_real_
 
         grid_summary <- rbind(
           grid_summary,
@@ -526,18 +651,27 @@ MEP_mixture <- function(
             acceptance_rate = res$acceptance_rate,
             prop_matched = res$prop_matched,
             posterior_ratio_std = ratio_std_str,
+            converged = conv_val,
+            ess_min = ess_min_val,
+            geweke_max_abs = geweke_max_val,
             stringsAsFactors = FALSE
           )
         )
+
         runs[[gid]] <- res
         gid <- gid + 1L
       }
     }
   }
 
-  # GLM (on standardized encoded design)
+  # GLM ratios (on standardized encoded design)
   X_scaled <- scale(X_mm)
-  glm_fit <- try(suppressWarnings(stats::glm(y ~ ., data = data.frame(y = y, X_scaled), family = stats::binomial())), silent = TRUE)
+  glm_fit <- try(suppressWarnings(stats::glm(
+    y ~ .,
+    data = data.frame(y = y, X_scaled),
+    family = stats::binomial()
+  )), silent = TRUE)
+
   glm_ok <- !(inherits(glm_fit, "try-error"))
   glm_coef <- if (glm_ok) stats::coef(glm_fit) else rep(NA_real_, 1 + p_enc)
 
@@ -546,26 +680,35 @@ MEP_mixture <- function(
       num <- coefs[-c(1, ref_pos)]
       if (length(num) == 0) return(NA_character_)
       paste(round(num / coefs[ref_pos], 3), collapse = ", ")
-    } else NA_character_
+    } else {
+      NA_character_
+    }
   }
+
   parse_ratio <- function(s) {
     if (is.null(s) || is.na(s) || s == "") return(NA_real_)
     as.numeric(strsplit(s, ",\\s*")[[1]])
   }
+
   ref_ratio_str <- safe_ratio_from_glm(glm_coef, ref_pos_enc)
   ref_ratio_vec <- parse_ratio(ref_ratio_str)
 
   # select best
   z <- grid_summary
-  z2 <- subset(z, is.finite(acceptance_rate) & acceptance_rate >= accept_window[1] & acceptance_rate <= accept_window[2])
+  z2 <- subset(z, is.finite(acceptance_rate) &
+                 acceptance_rate >= accept_window[1] &
+                 acceptance_rate <= accept_window[2])
+
   if (nrow(z2) == 0) {
     z2 <- z
     z2$acc_term <- abs(z2$acceptance_rate - accept_target)
   } else {
     z2$acc_term <- 0
   }
+
   z2$prop_term <- -z2$prop_matched
   z2$ratio_term <- NA_real_
+
   if (!all(is.na(ref_ratio_vec))) {
     z2$ratio_term <- vapply(z2$posterior_ratio_std, function(rs) {
       pv <- parse_ratio(rs)
@@ -574,6 +717,7 @@ MEP_mixture <- function(
       mean(abs(pv - ref_ratio_vec))
     }, numeric(1))
   }
+
   if (any(is.finite(z2$ratio_term))) {
     z2$score <- z2$acc_term + z2$prop_term + z2$ratio_term
     z2 <- z2[order(z2$score, z2$acc_term, z2$prop_term, na.last = TRUE), , drop = FALSE]
@@ -581,38 +725,13 @@ MEP_mixture <- function(
     z2$score <- z2$acc_term + z2$prop_term
     z2 <- z2[order(z2$score, z2$acc_term, na.last = TRUE), , drop = FALSE]
   }
+
   best_id <- z2$grid_id[1]
   best_run <- runs[[best_id]]
   best_row <- z[z$grid_id == best_id, , drop = FALSE]
 
-  # outputs
   effects <- best_run$effects
-  pm      <- best_run$pm
-  #safe_div <- function(num, den) ifelse(is.finite(den) & abs(den) > 1e-12, num / den, NA_real_)
-
-  glm_beta <- glm_coef[-1]
-  #glm_ratio <- safe_div(glm_beta, glm_beta[ref_enc_cols[1]])
-
-  mep_beta_std <- pm[-1]
-  #mep_ratio_std <- safe_div(mep_beta_std, mep_beta_std[ref_enc_cols[1]])
-
-  #ratios_list <- list(
-   # GLM_beta = glm_beta,
-   # GLM_ratio = glm_ratio,
-   # MEP_beta_std = mep_beta_std,
-  #  MEP_ratio_std = mep_ratio_std
-  #)
-
-  if (transform_back != "none") {
-    bt_vec <- best_run$bt[[transform_back]]
-    names(bt_vec) <- colnames(X_mm)
-    beta_name <- paste0("MEP_beta_b_", transform_back, "_original")
-    ratio_name <- paste0("MEP_ratio_b_", transform_back, "_original")
-    denom_name <- colnames(X_mm)[ref_enc_cols[1]]
-
-    #ratios_list[[beta_name]]  <- bt_vec
-    #ratios_list[[ratio_name]] <- safe_div(bt_vec, bt_vec[denom_name])
-  }
+  pm <- best_run$pm
 
   list(
     ref_predictor = list(index = ref_idx_term, name = ref_name),
@@ -624,13 +743,16 @@ MEP_mixture <- function(
       sigma_diag = best_row$sigma_diag,
       kappa = best_row$kappa,
       acceptance_rate = best_row$acceptance_rate,
-      prop_matched = best_row$prop_matched
+      prop_matched = best_row$prop_matched,
+      converged = best_run$diagnostics$converged,
+      ess_min = best_run$diagnostics$ess_min,
+      geweke_max_abs = best_run$diagnostics$geweke_max_abs
     ),
     posterior = list(
       means_std = pm,
       effects = effects
     ),
-    #ratios = ratios_list,
+    convergence = best_run$diagnostics,
     draws = if (isTRUE(return_draws)) best_run$chain else NULL
   )
 }
