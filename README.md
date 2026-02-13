@@ -251,6 +251,25 @@ fit_cc <- EP_univariable(df2, "x", "y", missing = "complete",
 fit_im <- EP_univariable(df2, "x", "y", missing = "impute",
                          impute_args = list(numeric_method = "median"),
                          n_iter = 4000, burn_in = 1500, seed = 9)
+                         
+## Single Chain
+fit_single <- EP_univariable(df, predictor = "x", outcome = "y",
+                          n_iter = 20000, burn_in = 5000, init_beta=c(0,0),
+                          seed = 9,
+                          transform_beta1 = "none")
+fit_single$posterior
+fit_single$convergence
+
+## Multiple Chains
+fit_multi <- EP_univariable(df, predictor = "x", outcome = "y", 
+                         n_iter = 20000, burn_in = 5000, init_beta=c(0,0),
+                         n_chains = 4,
+                         chain_seeds = c(101, 102, 103, 104),
+                         combine_chains = "stack",
+                         seed = 9,
+                         transform_beta1 = "none")
+fit_multi$posterior
+fit_multi$diagnostics_multi
 ```
 
 **Interpretation**

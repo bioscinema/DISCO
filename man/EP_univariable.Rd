@@ -12,9 +12,15 @@ EP_univariable(
   impute_args = list(),
   n_iter = 20000,
   burn_in = 5000,
+  init_beta = c(0, 0),
   step_hi = 0.3,
   step_lo = 0.12,
   ci_level = 0.95,
+  n_chains = 1,
+  chain_seeds = NULL,
+  combine_chains = c("stack", "none"),
+  ess_threshold = 150,
+  geweke_z_threshold = 2,
   compare = TRUE,
   return_draws = FALSE,
   seed = NULL,
@@ -54,11 +60,31 @@ Default \code{20000}.}
 \item{burn_in}{Integer; burn-in iterations discarded from the front.
 Default \code{5000}.}
 
+\item{init_beta}{Initial value(s) for the MH chain on the standardized scale.
+Either a numeric vector of length 2 (intercept, slope) or a 2 by \code{n_chains}
+matrix for per-chain initial values. Default \code{c(0, 0)}.}
+
 \item{step_hi, step_lo}{RW–MH proposal s.d. blended by severity as
 \code{step = step_hi*(1 - severity) + step_lo*severity}.
 Defaults \code{0.30} and \code{0.12}.}
 
 \item{ci_level}{Credible interval level in (0,1). Default \code{0.95}.}
+
+\item{n_chains}{Integer; number of MH chains to run. Default \code{1}.}
+
+\item{chain_seeds}{Optional integer vector of length \code{n_chains} giving
+per-chain RNG seeds. If \code{NULL}, seeds are generated deterministically
+from \code{seed}.}
+
+\item{combine_chains}{How to combine chains for posterior summaries.
+\code{"stack"} binds post-burn draws across chains; \code{"none"} uses only
+the first chain. Default \code{"stack"}.}
+
+\item{ess_threshold}{Minimum effective sample size required (across parameters)
+to declare convergence when \pkg{coda} is available. Default \code{150}.}
+
+\item{geweke_z_threshold}{Maximum allowed absolute Geweke z-score (across parameters)
+to declare convergence when \pkg{coda} is available. Default \code{2}.}
 
 \item{compare}{Logical; if \code{TRUE} (default) fit a GLM comparator on the same rows
 \emph{with standardized X} for reference.}
@@ -89,6 +115,10 @@ Defaults \code{0.45} and \code{0.20}.}
 
 \item{tune_interval}{Iterations between tuning checks during burn-in.
 Default \code{500}.}
+
+\item{ci_levels_for_stars}{Numeric vector of nested credible interval levels
+used to assign “evidence stars” in \code{posterior}. Default
+\code{c(0.90, 0.95, 0.99)}.}
 }
 \value{
 A list with components:
@@ -101,13 +131,22 @@ A list with components:
 \item \code{mcmc}: list with \code{acceptance_rate}, \code{step_size_used},
 \code{n_iter}, \code{burn_in}.
 \item \code{posterior}: data.frame of summaries with columns \code{Param},
-\code{Mean}, \code{SD}, \code{CI_low}, \code{CI_high}, containing
-\code{beta0}, \code{beta1} (standardized) and, if requested via
-\code{transform_beta1}, \code{beta0_orig} plus one of
+\code{Mean}, \code{SD}, \code{CI_low}, \code{CI_high}, plus
+\code{Sig_0} (CI excludes 0) and \code{Star} (based on nested credible
+intervals). Contains \code{beta0}, \code{beta1} (standardized) and, if
+requested via \code{transform_beta1}, \code{beta0_orig} plus one of
 \code{beta1_logit}/\code{beta1_SAS}/\code{beta1_Long}.
 \item \code{comparators}: list with a \code{glm} coefficient vector (fit on standardized X)
 when available.
 \item \code{rows_used}: integer indices of rows used after missing handling.
+\item \code{diagnostics_multi}: list with multi-chain diagnostics (when
+\code{n_chains >= 2} and \pkg{coda} is available): \code{rhat},
+\code{rhat_max}, \code{ess}, \code{ess_min}.
+\item \code{convergence}: list with single-posterior diagnostics for the
+final combined draws: \code{ess}, \code{geweke_z}, \code{ess_min},
+\code{geweke_max_abs}, \code{converged}.
+\item \code{mcmc}: list also includes per-chain acceptance rates when
+\code{n_chains > 1}.
 \item \code{draws} (optional): list with \code{chain_std} and \code{chain_orig}
 (included when \code{return_draws = TRUE}).
 }
@@ -153,6 +192,20 @@ and we also report one of:
 \strong{Tuning.} During burn-in, the RW–MH step size is multiplicatively
 adapted every \code{tune_interval} iterations to aim for an acceptance rate
 between \code{tune_threshold_lo} and \code{tune_threshold_hi}.
+
+\strong{Initialization and multiple chains.}
+The chain is initialized at \code{init_beta} on the standardized scale. If
+\code{n_chains > 1}, chains are run with independent seeds and can be combined
+via \code{combine_chains}.
+
+\strong{Convergence diagnostics.}
+When \pkg{coda} is available, the function reports ESS and Geweke diagnostics
+for the combined draws in \code{convergence}. For \code{n_chains >= 2}, it also
+reports Gelman Rhat and multi-chain ESS in \code{diagnostics_multi}.
+
+\strong{Evidence stars.}
+The \code{posterior} table includes \code{Sig_0} and \code{Star}, where stars
+are assigned by whether nested credible intervals exclude 0.
 }
 \section{Output conventions}{
 
@@ -217,6 +270,20 @@ fit_cc <- EP_univariable(df2, "x", "y", missing = "complete",
 fit_im <- EP_univariable(df2, "x", "y", missing = "impute",
                          impute_args = list(numeric_method = "median"),
                          n_iter = 4000, burn_in = 1500, seed = 9)
+
+## 5) Multiple chains and Rhat (if coda installed)
+fit_multi <- EP_univariable(
+  data = df, predictor = "x", outcome = "y",
+  n_iter = 20000, burn_in = 5000,
+  init_beta = c(0, 0),
+  n_chains = 4,
+  chain_seeds = c(101, 102, 103, 104),
+  combine_chains = "stack",
+  seed = 9
+)
+fit_multi$diagnostics_multi$rhat
+fit_multi$diagnostics_multi$rhat_max
+fit_multi$convergence$converged
 }
 }
 \seealso{

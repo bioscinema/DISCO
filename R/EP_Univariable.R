@@ -37,6 +37,10 @@
 #'   Default \code{20000}.
 #' @param burn_in Integer; burn-in iterations discarded from the front.
 #'   Default \code{5000}.
+#' @param init_beta Initial value(s) for the MH chain on the standardized scale.
+#'   Either a numeric vector of length 2 (intercept, slope) or a 2 by \code{n_chains}
+#'   matrix for per-chain initial values. Default \code{c(0, 0)}.
+#'
 #' @param step_hi,step_lo RW–MH proposal s.d. blended by severity as
 #'   \code{step = step_hi*(1 - severity) + step_lo*severity}.
 #'   Defaults \code{0.30} and \code{0.12}.
@@ -65,6 +69,23 @@
 #' @param tune_interval Iterations between tuning checks during burn-in.
 #'   Default \code{500}.
 #'
+#' @param n_chains Integer; number of MH chains to run. Default \code{1}.
+#' @param chain_seeds Optional integer vector of length \code{n_chains} giving
+#'   per-chain RNG seeds. If \code{NULL}, seeds are generated deterministically
+#'   from \code{seed}.
+#' @param combine_chains How to combine chains for posterior summaries.
+#'   \code{"stack"} binds post-burn draws across chains; \code{"none"} uses only
+#'   the first chain. Default \code{"stack"}.
+#'
+#' @param ess_threshold Minimum effective sample size required (across parameters)
+#'   to declare convergence when \pkg{coda} is available. Default \code{150}.
+#' @param geweke_z_threshold Maximum allowed absolute Geweke z-score (across parameters)
+#'   to declare convergence when \pkg{coda} is available. Default \code{2}.
+#'
+#' @param ci_levels_for_stars Numeric vector of nested credible interval levels
+#'   used to assign “evidence stars” in \code{posterior}. Default
+#'   \code{c(0.90, 0.95, 0.99)}.
+#'
 #' @return A list with components:
 #' \itemize{
 #'   \item \code{predictor}, \code{outcome}
@@ -75,13 +96,22 @@
 #'   \item \code{mcmc}: list with \code{acceptance_rate}, \code{step_size_used},
 #'         \code{n_iter}, \code{burn_in}.
 #'   \item \code{posterior}: data.frame of summaries with columns \code{Param},
-#'         \code{Mean}, \code{SD}, \code{CI_low}, \code{CI_high}, containing
-#'         \code{beta0}, \code{beta1} (standardized) and, if requested via
-#'         \code{transform_beta1}, \code{beta0_orig} plus one of
+#'         \code{Mean}, \code{SD}, \code{CI_low}, \code{CI_high}, plus
+#'         \code{Sig_0} (CI excludes 0) and \code{Star} (based on nested credible
+#'         intervals). Contains \code{beta0}, \code{beta1} (standardized) and, if
+#'         requested via \code{transform_beta1}, \code{beta0_orig} plus one of
 #'         \code{beta1_logit}/\code{beta1_SAS}/\code{beta1_Long}.
 #'   \item \code{comparators}: list with a \code{glm} coefficient vector (fit on standardized X)
 #'         when available.
 #'   \item \code{rows_used}: integer indices of rows used after missing handling.
+#'   \item \code{diagnostics_multi}: list with multi-chain diagnostics (when
+#'         \code{n_chains >= 2} and \pkg{coda} is available): \code{rhat},
+#'         \code{rhat_max}, \code{ess}, \code{ess_min}.
+#'   \item \code{convergence}: list with single-posterior diagnostics for the
+#'         final combined draws: \code{ess}, \code{geweke_z}, \code{ess_min},
+#'         \code{geweke_max_abs}, \code{converged}.
+#'   \item \code{mcmc}: list also includes per-chain acceptance rates when
+#'         \code{n_chains > 1}.
 #'   \item \code{draws} (optional): list with \code{chain_std} and \code{chain_orig}
 #'         (included when \code{return_draws = TRUE}).
 #' }
@@ -122,6 +152,19 @@
 #' adapted every \code{tune_interval} iterations to aim for an acceptance rate
 #' between \code{tune_threshold_lo} and \code{tune_threshold_hi}.
 #'
+#' \strong{Initialization and multiple chains.}
+#' The chain is initialized at \code{init_beta} on the standardized scale. If
+#' \code{n_chains > 1}, chains are run with independent seeds and can be combined
+#' via \code{combine_chains}.
+#'
+#' \strong{Convergence diagnostics.}
+#' When \pkg{coda} is available, the function reports ESS and Geweke diagnostics
+#' for the combined draws in \code{convergence}. For \code{n_chains >= 2}, it also
+#' reports Gelman Rhat and multi-chain ESS in \code{diagnostics_multi}.
+#'
+#' \strong{Evidence stars.}
+#' The \code{posterior} table includes \code{Sig_0} and \code{Star}, where stars
+#' are assigned by whether nested credible intervals exclude 0.
 #' @seealso
 #' \code{\link[DISCO]{uni_separation}} for severity diagnostics.
 #'
@@ -176,6 +219,21 @@
 #' fit_im <- EP_univariable(df2, "x", "y", missing = "impute",
 #'                          impute_args = list(numeric_method = "median"),
 #'                          n_iter = 4000, burn_in = 1500, seed = 9)
+#'
+#' ## 5) Multiple chains and Rhat (if coda installed)
+#' fit_multi <- EP_univariable(
+#'   data = df, predictor = "x", outcome = "y",
+#'   n_iter = 20000, burn_in = 5000,
+#'   init_beta = c(0, 0),
+#'   n_chains = 4,
+#'   chain_seeds = c(101, 102, 103, 104),
+#'   combine_chains = "stack",
+#'   seed = 9
+#' )
+#' fit_multi$diagnostics_multi$rhat
+#' fit_multi$diagnostics_multi$rhat_max
+#' fit_multi$convergence$converged
+
 #' }
 EP_univariable <- function(
     data,
@@ -185,27 +243,58 @@ EP_univariable <- function(
     impute_args = list(),
     n_iter = 20000,
     burn_in = 5000,
+    init_beta = c(0, 0),
     step_hi = 0.30,
     step_lo = 0.12,
     ci_level = 0.95,
+    n_chains = 1,
+    chain_seeds = NULL,
+    combine_chains = c("stack","none"),
+    ess_threshold = 150,
+    geweke_z_threshold = 2,
     compare = TRUE,
     return_draws = FALSE,
     seed = NULL,
-    # back-transform choice for beta1 (and corresponding intercept)
     transform_beta1 = c("none","logit","SAS","Long"),
-    # prior defaults
     sigma0 = 10,
     sigma1_hi = 5,
     sigma1_lo = 0.15,
     kappa_min = 1,
     kappa_max = 2.5,
-    # tuning defaults
     tune_threshold_hi = 0.45,
     tune_threshold_lo = 0.20,
     tune_interval = 500
 ) {
-  # --- helpers ----------------------------------------------------------------
   `%||%` <- function(a, b) if (!is.null(a)) a else b
+
+  missing <- match.arg(missing)
+  transform_beta1 <- match.arg(transform_beta1)
+  combine_chains <- match.arg(combine_chains)
+
+  if (!is.data.frame(data)) stop("`data` must be a data.frame.", call. = FALSE)
+  if (!predictor %in% names(data)) stop(sprintf("Predictor '%s' not found.", predictor), call. = FALSE)
+  if (!outcome %in% names(data)) stop(sprintf("Outcome '%s' not found.", outcome), call. = FALSE)
+  if (!is.null(seed)) set.seed(as.integer(seed))
+  if (!is.numeric(n_iter) || length(n_iter) != 1 || n_iter <= 1) stop("`n_iter` must be > 1.", call. = FALSE)
+  if (!is.numeric(burn_in) || length(burn_in) != 1 || burn_in < 0) stop("`burn_in` must be >= 0.", call. = FALSE)
+  if (n_iter <= burn_in) stop("`n_iter` must be greater than `burn_in`.", call. = FALSE)
+
+  if (!is.numeric(init_beta)) stop("`init_beta` must be numeric.", call. = FALSE)
+  if (length(init_beta) == 1L) init_beta <- rep(as.numeric(init_beta), 2)
+  if (length(init_beta) != 2L) stop("`init_beta` must be length 2 (intercept, slope).", call. = FALSE)
+  init_beta <- as.numeric(init_beta)
+
+  if (!is.numeric(n_chains) || length(n_chains) != 1 || n_chains < 1) stop("`n_chains` must be a positive integer.", call. = FALSE)
+  n_chains <- as.integer(n_chains)
+
+  if (!is.null(chain_seeds)) {
+    if (length(chain_seeds) != n_chains) stop("`chain_seeds` must have length `n_chains`.", call. = FALSE)
+    chain_seeds <- as.integer(chain_seeds)
+  } else {
+    base_seed <- if (!is.null(seed)) as.integer(seed) else sample.int(1e9, 1)
+    chain_seeds <- base_seed + seq_len(n_chains)
+  }
+
   impute_vec <- function(v, args) {
     if (is.numeric(v)) {
       if (anyNA(v)) {
@@ -229,19 +318,11 @@ EP_univariable <- function(
       }
       v
     } else {
+      v <- suppressWarnings(as.numeric(v))
       v[is.na(v)] <- 0
       v
     }
   }
-
-  missing <- match.arg(missing)
-  transform_beta1 <- match.arg(transform_beta1)
-
-  if (!is.data.frame(data)) stop("`data` must be a data.frame.", call. = FALSE)
-  if (!predictor %in% names(data)) stop(sprintf("Predictor '%s' not found.", predictor), call. = FALSE)
-  if (!outcome %in% names(data)) stop(sprintf("Outcome '%s' not found.", outcome), call. = FALSE)
-  if (!is.null(seed)) set.seed(as.integer(seed))
-  if (n_iter <= burn_in) stop("`n_iter` must be greater than `burn_in`.", call. = FALSE)
 
   # --- 1) Shared missing handling (applied once) ------------------------------
   y_full <- data[[outcome]]
@@ -251,7 +332,7 @@ EP_univariable <- function(
     keep_idx <- which(!is.na(y_full) & !is.na(x_full))
     if (!length(keep_idx)) stop("No complete cases for outcome & predictor.", call. = FALSE)
     y <- y_full[keep_idx]; x <- x_full[keep_idx]
-  } else { # "impute"
+  } else {
     keep_idx <- which(!is.na(y_full))
     if (!length(keep_idx)) stop("No rows with observed outcome.", call. = FALSE)
     y <- y_full[keep_idx]; x <- x_full[keep_idx]
@@ -265,14 +346,13 @@ EP_univariable <- function(
   if (length(unique(y)) < 2L) stop("Outcome must contain both 0 and 1 after missing handling.", call. = FALSE)
 
   # Predictor for estimation: numeric vector (standardized later)
-  # If factor with 2 levels -> 0/1; if >2 levels -> error
   if (!is.numeric(x)) {
     if (is.factor(x) || is.character(x) || is.logical(x)) {
       x <- as.factor(x)
       if (nlevels(x) != 2L) stop("Predictor has >2 levels; EP_univariable handles numeric or 2-level factors.", call. = FALSE)
       x <- as.integer(x) - 1L
     } else {
-      x <- as.numeric(x)
+      x <- suppressWarnings(as.numeric(x))
     }
   }
 
@@ -281,7 +361,7 @@ EP_univariable <- function(
   res_disco <- DISCO::uni_separation(
     data = data.frame(y = y, x = x_for_disco),
     predictor = "x", outcome = "y",
-    missing = "complete"  # already handled outside
+    missing = "complete"
   )
 
   # --- 3) Standardize predictor for Bayesian and GLM comparator ---------------
@@ -303,81 +383,132 @@ EP_univariable <- function(
       rows_used = keep_idx
     ))
   }
+  X_std_num <- as.numeric(X_std)
 
   # --- 4) Adaptive prior from severity ----------------------------------------
-  severity <- res_disco$severity_score; if (is.null(severity) || is.na(severity)) severity <- 0
+  severity <- res_disco$severity_score
+  if (is.null(severity) || is.na(severity)) severity <- 0
   y_bar <- mean(y)
   logit_clip <- function(p) stats::qlogis(pmin(pmax(p, 1e-6), 1 - 1e-6))
+
   prior_from_severity <- function(severity_score, y_bar,
                                   sigma0, sigma1_hi, sigma1_lo,
                                   kappa_min, kappa_max) {
-    mu0 <- logit_clip(y_bar); mu1 <- 0
+    mu0 <- logit_clip(y_bar)
+    mu1 <- 0
     log_sigma1 <- (1 - severity_score) * log(sigma1_hi) + severity_score * log(sigma1_lo)
     sigma1 <- exp(log_sigma1)
     kappa  <- kappa_min + severity_score * (kappa_max - kappa_min)
     mu     <- c(mu0, mu1)
     Sigma  <- diag(c(sigma0^2, sigma1^2))
-    list(mu = mu, Sigma = Sigma, kappa = kappa,
-         sigma0 = sigma0, sigma1 = sigma1)
+    list(mu = mu, Sigma = Sigma, kappa = kappa, sigma0 = sigma0, sigma1 = sigma1)
   }
+
   pr <- prior_from_severity(severity, y_bar, sigma0, sigma1_hi, sigma1_lo, kappa_min, kappa_max)
   mu <- pr$mu; Sigma <- pr$Sigma; kappa <- pr$kappa
 
   # Proposal step blended by severity
-  step_size <- step_hi * (1 - severity) + step_lo * severity
+  step_size0 <- step_hi * (1 - severity) + step_lo * severity
 
-  # --- 5) RW–MH sampler (intercept + standardized slope) ----------------------
-  run_MH_sampler_uni <- function(n_iter, init_beta, step_size, X_std, y, mu, Sigma, kappa, burn_in,
-                                 tune_hi, tune_lo, tune_interval) {
-    X <- cbind(Intercept = 1, X_std); p <- ncol(X)
+  # --- 5) RW–MH sampler (one chain) -------------------------------------------
+  log1pexp <- function(x) ifelse(x > 0, x + log1p(exp(-x)), log1p(exp(x)))
+
+  run_MH_uni_one <- function(n_iter, burn_in, init_beta, step_size, X_std, y, mu, Sigma, kappa,
+                             tune_hi, tune_lo, tune_interval, chain_seed = NULL) {
+    if (!is.null(chain_seed)) set.seed(as.integer(chain_seed))
+    X <- cbind(Intercept = 1, X_std)
     Sigma_inv <- solve(Sigma)
+
     log_post <- function(beta) {
       eta <- as.vector(X %*% beta)
-      pi_x <- 1 / (1 + exp(-eta))
-      loglik <- sum(y * log(pi_x + 1e-12) + (1 - y) * log(1 - pi_x + 1e-12))
+      ll <- sum(-y * log1pexp(-eta) - (1 - y) * log1pexp(eta))
       diff <- beta - mu
       d2 <- as.numeric(t(diff) %*% Sigma_inv %*% diff)
-      logprior <- -0.5 * (d2^kappa)
-      loglik + logprior
+      ll - 0.5 * (d2^kappa)
     }
-    chain <- matrix(0, n_iter, p); chain[1, ] <- init_beta
-    cur_lp <- log_post(chain[1, ]); accept <- 0L
+
+    chain <- matrix(0, nrow = n_iter, ncol = 2)
+    colnames(chain) <- c("beta0", "beta1")
+    chain[1, ] <- init_beta
+
+    cur_lp <- log_post(chain[1, ])
+    accept <- 0L
+    ss <- step_size
+
     for (t in 2:n_iter) {
-      prop <- chain[t - 1, ] + step_size * rnorm(p)
+      prop <- chain[t - 1, ] + ss * rnorm(2)
       prop_lp <- log_post(prop)
       if (log(runif(1)) < (prop_lp - cur_lp)) {
-        chain[t, ] <- prop; cur_lp <- prop_lp; accept <- accept + 1L
+        chain[t, ] <- prop
+        cur_lp <- prop_lp
+        accept <- accept + 1L
       } else {
         chain[t, ] <- chain[t - 1, ]
       }
+
       if (t <= burn_in && (t %% tune_interval) == 0) {
         acc <- accept / t
-        if (acc > tune_hi) step_size <- step_size * 1.10
-        if (acc < tune_lo) step_size <- step_size * 0.90
+        if (acc > tune_hi) ss <- ss * 1.10
+        if (acc < tune_lo) ss <- ss * 0.90
       }
     }
-    list(chain = chain[(burn_in + 1):n_iter, , drop = FALSE],
-         acceptance_rate = accept / (n_iter - 1))
+
+    post <- chain[(burn_in + 1):n_iter, , drop = FALSE]
+    list(post = post, acceptance_rate = accept / (n_iter - 1), step_size_final = ss)
   }
 
-  fit <- run_MH_sampler_uni(
-    n_iter    = n_iter,
-    init_beta = c(mu[1], 0),
-    step_size = step_size,
-    X_std     = as.numeric(X_std),
-    y         = y,
-    mu        = mu,
-    Sigma     = Sigma,
-    kappa     = kappa,
-    burn_in   = burn_in,
-    tune_hi   = tune_threshold_hi,
-    tune_lo   = tune_threshold_lo,
-    tune_interval = tune_interval
-  )
-  chain_std <- fit$chain
-  acc_rate  <- fit$acceptance_rate
+  chains <- vector("list", n_chains)
+  for (i in seq_len(n_chains)) {
+    chains[[i]] <- run_MH_uni_one(
+      n_iter = n_iter,
+      burn_in = burn_in,
+      init_beta = init_beta,
+      step_size = step_size0,
+      X_std = X_std_num,
+      y = y,
+      mu = mu,
+      Sigma = Sigma,
+      kappa = kappa,
+      tune_hi = tune_threshold_hi,
+      tune_lo = tune_threshold_lo,
+      tune_interval = tune_interval,
+      chain_seed = chain_seeds[i]
+    )
+  }
 
-  # --- 6) Back-transform to original predictor scale --------------------------
+  # multi-chain diagnostics (Rhat and multi-chain ESS)
+  diagnostics_multi <- list(
+    rhat = c(beta0 = NA_real_, beta1 = NA_real_),
+    rhat_max = NA_real_,
+    ess = c(beta0 = NA_real_, beta1 = NA_real_),
+    ess_min = NA_real_
+  )
+
+  if (requireNamespace("coda", quietly = TRUE) && n_chains >= 2) {
+    mlist <- coda::mcmc.list(lapply(chains, function(z) coda::mcmc(z$post)))
+
+    gd <- coda::gelman.diag(mlist, autoburnin = FALSE, multivariate = FALSE)$psrf
+    # gd is a matrix with rows = params, columns include "Point est."
+    rhat <- as.numeric(gd[, "Point est."])
+    names(rhat) <- colnames(chains[[1]]$post)
+
+    diagnostics_multi$rhat <- rhat
+    diagnostics_multi$rhat_max <- suppressWarnings(max(rhat, na.rm = TRUE))
+
+    ess_m <- coda::effectiveSize(mlist)
+    diagnostics_multi$ess <- as.numeric(ess_m)
+    names(diagnostics_multi$ess) <- names(rhat)
+    diagnostics_multi$ess_min <- suppressWarnings(min(diagnostics_multi$ess, na.rm = TRUE))
+  }
+
+  # combine post-burn draws
+  if (combine_chains == "stack") {
+    post_std <- do.call(rbind, lapply(chains, `[[`, "post"))
+  } else {
+    post_std <- chains[[1]]$post
+  }
+
+  # --- 6) Back-transform chain to original predictor scale --------------------
   transform_chain_to_original <- function(chain_std, x_mean, x_sd) {
     b0_std <- chain_std[, 1]
     b1_std <- chain_std[, 2]
@@ -391,58 +522,141 @@ EP_univariable <- function(
           beta1_SAS = beta1_SAS,
           beta1_Long = beta1_Long)
   }
-  chain_orig <- transform_chain_to_original(chain_std, x_mean, x_sd)
+  post_orig <- transform_chain_to_original(post_std, x_mean, x_sd)
 
-  # --- 7) Posterior summaries --------------------------------------------------
-  qlo <- (1 - ci_level) / 2; qhi <- 1 - qlo
-  summ_one <- function(v) {
-    c(Mean = mean(v), SD = stats::sd(v),
-      CI_low = as.numeric(stats::quantile(v, qlo)),
-      CI_high = as.numeric(stats::quantile(v, qhi)))
+  # --- 7) Posterior summaries + significance stars ----------------------------
+  ci_mat_for_level <- function(M, lvl) {
+    qlo <- (1 - lvl) / 2
+    qhi <- 1 - qlo
+    t(apply(M, 2, stats::quantile, probs = c(qlo, qhi), na.rm = TRUE))
   }
-  rows_out <- list(beta0 = chain_std[, 1], beta1 = chain_std[, 2])
+
+  summarize_draws <- function(draws_mat, ci_level_main) {
+    pm <- colMeans(draws_mat)
+    sdv <- apply(draws_mat, 2, stats::sd)
+    ci_main <- ci_mat_for_level(draws_mat, ci_level_main)
+
+    ci90 <- ci_mat_for_level(draws_mat, 0.90)
+    ci95 <- ci_mat_for_level(draws_mat, 0.95)
+    ci99 <- ci_mat_for_level(draws_mat, 0.99)
+
+    star <- rep("", ncol(draws_mat))
+    star[(ci90[, 1] > 0) | (ci90[, 2] < 0)] <- "*"
+    star[(ci95[, 1] > 0) | (ci95[, 2] < 0)] <- "**"
+    star[(ci99[, 1] > 0) | (ci99[, 2] < 0)] <- "***"
+
+    sig0 <- (ci_main[, 1] > 0) | (ci_main[, 2] < 0)
+
+    data.frame(
+      Mean = pm,
+      SD = sdv,
+      CI_low = ci_main[, 1],
+      CI_high = ci_main[, 2],
+      Sig_0 = as.logical(sig0),
+      Star = star,
+      check.names = FALSE
+    )
+  }
+
+  # standardized params table
+  tab_std <- summarize_draws(post_std, ci_level)
+  posterior <- data.frame(
+    Param = c("beta0", "beta1"),
+    tab_std,
+    row.names = NULL,
+    check.names = FALSE
+  )
+
+  # optional original-scale rows
   if (transform_beta1 != "none") {
-    rows_out$beta0_orig <- chain_orig[, "beta0_orig"]
-    if (transform_beta1 == "logit") {
-      rows_out$beta1_logit <- chain_orig[, "beta1_logit"]
-    } else if (transform_beta1 == "SAS") {
-      rows_out$beta1_SAS <- chain_orig[, "beta1_SAS"]
-    } else if (transform_beta1 == "Long") {
-      rows_out$beta1_Long <- chain_orig[, "beta1_Long"]
-    }
-  }
-  posterior <- do.call(rbind, lapply(names(rows_out), function(nm) {
-    z <- summ_one(rows_out[[nm]])
-    data.frame(Param = nm, t(z), row.names = NULL, check.names = FALSE)
-  }))
+    tab_b0 <- summarize_draws(matrix(post_orig[, "beta0_orig"], ncol = 1), ci_level)
+    row_b0 <- data.frame(Param = "beta0_orig", tab_b0, row.names = NULL, check.names = FALSE)
 
-  # --- 8) GLM comparator (standardized X) -------------------------------------
+    if (transform_beta1 == "logit") {
+      tab_b1 <- summarize_draws(matrix(post_orig[, "beta1_logit"], ncol = 1), ci_level)
+      row_b1 <- data.frame(Param = "beta1_logit", tab_b1, row.names = NULL, check.names = FALSE)
+    } else if (transform_beta1 == "SAS") {
+      tab_b1 <- summarize_draws(matrix(post_orig[, "beta1_SAS"], ncol = 1), ci_level)
+      row_b1 <- data.frame(Param = "beta1_SAS", tab_b1, row.names = NULL, check.names = FALSE)
+    } else {
+      tab_b1 <- summarize_draws(matrix(post_orig[, "beta1_Long"], ncol = 1), ci_level)
+      row_b1 <- data.frame(Param = "beta1_Long", tab_b1, row.names = NULL, check.names = FALSE)
+    }
+
+    posterior <- rbind(posterior, row_b0, row_b1)
+    rownames(posterior) <- NULL
+  }
+
+  # --- 8) Convergence diagnostics (coda if available) -------------------------
+  convergence <- list(
+    ess = rep(NA_real_, ncol(post_std)),
+    geweke_z = rep(NA_real_, ncol(post_std)),
+    ess_min = NA_real_,
+    geweke_max_abs = NA_real_,
+    converged = NA
+  )
+
+  if (requireNamespace("coda", quietly = TRUE)) {
+    m <- coda::mcmc(post_std)
+    ess <- as.numeric(coda::effectiveSize(m))
+    gz  <- as.numeric(coda::geweke.diag(m)$z)
+
+    convergence$ess <- ess
+    convergence$geweke_z <- gz
+    convergence$ess_min <- suppressWarnings(min(ess, na.rm = TRUE))
+    convergence$geweke_max_abs <- suppressWarnings(max(abs(gz), na.rm = TRUE))
+
+    ess_ok <- is.finite(convergence$ess_min) && convergence$ess_min >= ess_threshold
+    gz_ok  <- is.finite(convergence$geweke_max_abs) && convergence$geweke_max_abs <= geweke_z_threshold
+    convergence$converged <- isTRUE(ess_ok && gz_ok)
+  }
+
+  # --- 9) GLM comparator (standardized X) -------------------------------------
   comparators <- list(glm = NULL)
   if (isTRUE(compare)) {
-    df_fit <- data.frame(y = y, X = as.numeric(X_std))
+    df_fit <- data.frame(y = y, X = X_std_num)
     glm_fit <- try(suppressWarnings(stats::glm(y ~ X, data = df_fit, family = stats::binomial())), silent = TRUE)
     if (!inherits(glm_fit, "try-error")) comparators$glm <- stats::coef(glm_fit)
   }
 
-  # --- 9) Assemble and return --------------------------------------------------
+  # --- 10) Assemble and return ------------------------------------------------
+  mcmc_info <- list(
+    acceptance_rate_by_chain = vapply(chains, function(z) z$acceptance_rate, numeric(1)),
+    step_size_final_by_chain = vapply(chains, function(z) z$step_size_final, numeric(1)),
+    n_iter = n_iter,
+    burn_in = burn_in,
+    n_chains = n_chains,
+    combine_chains = combine_chains,
+    init_beta = init_beta,
+    chain_seeds = chain_seeds
+  )
+
   out <- list(
     predictor = predictor,
-    outcome   = outcome,
+    outcome = outcome,
     disco = list(
       separation_type = res_disco$separation_type,
-      severity_score  = res_disco$severity_score,
+      severity_score = res_disco$severity_score,
       boundary_threshold = res_disco$boundary_threshold,
       single_tie_boundary = res_disco$single_tie_boundary,
-      missing_info    = list(rows_used = keep_idx, policy = missing, imputed = (missing == "impute"))
+      missing_info = list(rows_used = keep_idx, policy = missing, imputed = (missing == "impute"))
     ),
     prior = list(mu = mu, Sigma = Sigma, kappa = kappa,
                  sigma0 = pr$sigma0, sigma1 = pr$sigma1),
-    mcmc  = list(acceptance_rate = acc_rate, step_size_used = step_size,
-                 n_iter = n_iter, burn_in = burn_in),
+    mcmc = mcmc_info,
     posterior = posterior,
+    convergence = convergence,
+    diagnostics_multi = diagnostics_multi,
     comparators = comparators,
     rows_used = keep_idx
   )
-  if (isTRUE(return_draws)) out$draws <- list(chain_std = chain_std, chain_orig = chain_orig)
+
+  if (isTRUE(return_draws)) {
+    out$draws <- list(
+      chain_std = if (combine_chains == "stack") post_std else chains[[1]]$post,
+      chain_orig = if (combine_chains == "stack") post_orig else transform_chain_to_original(chains[[1]]$post, x_mean, x_sd)
+    )
+  }
+
   out
 }
