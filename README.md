@@ -384,10 +384,9 @@ fit_single$posterior$effects
 
 
 ## Multiple Chains
-
 fit_multi <- MEP_mixture(
   y, X,
-  n_iter_grid = 10000, burn_in_grid = 1000,
+  n_iter_grid = 10000, burn_in_grid = 1000, init_beta = 0.01,
   n_chains_best = 4,
   chain_seeds_best = c(101, 102, 103, 104),
   combine_chains = "stack",
