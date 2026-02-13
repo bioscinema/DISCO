@@ -372,21 +372,31 @@ X <- data.frame(
   X3 = factor(c(rep("A",4), rep("B",4)))
 )
 
-fit <- MEP_mixture(
+## Single Chain
+fit_single <- MEP_mixture(
   y, X,
-  n_iter_grid = 4000, burn_in_grid = 1000, step_size = 0.40,
-  sigma_hi = 5, sigma_lo = 0.15,
-  kappa_min = 1, kappa_max = 2.5,
-  sigma_global_multipliers = c(0.1, 0.5, 1, 2, 5, 10),
-  accept_window = c(0.30, 0.40),
-  accept_target = 0.35,
-  transform_back = "logit",
-  ci_level = 0.95,
+  n_iter_grid = 10000, burn_in_grid = 1000, init_beta = 0.01,
+  transform_back = "none",
   seed = 9
 )
+fit_single$convergence
+fit_single$posterior$effects
 
-fit$ref_predictor       # chosen reference (original predictor index/name)
-fit$posterior$effects   # Scaled + CI + (b_logit/SAS/Long)_original + CI columns
+
+## Multiple Chains
+
+fit_multi <- MEP_mixture(
+  y, X,
+  n_iter_grid = 10000, burn_in_grid = 1000,
+  n_chains_best = 4,
+  chain_seeds_best = c(101, 102, 103, 104),
+  combine_chains = "stack",
+  transform_back = "none",
+  seed = 9
+)
+fit_multi$diagnostics_multi
+fit_multi$posterior$effects
+
 ```
 
 **Notes**

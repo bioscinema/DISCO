@@ -98,29 +98,97 @@
 #'        parameters) to declare convergence when `coda` is available. Default `150`.
 #' @param geweke_z_threshold Numeric; maximum allowed absolute Geweke z-score (across all
 #'        parameters) to declare convergence when `coda` is available. Default `2`.
-
+#' @param n_chains_best Integer; number of independent MH chains to rerun for the selected
+#'        best grid point only. Default `1`. When `n_chains_best >= 2` and package `coda`
+#'        is available, multi-chain diagnostics (Gelman-Rubin R-hat and ESS) are computed.
+#' @param chain_seeds_best Optional integer vector of length `n_chains_best`. Each value is used
+#'        as the RNG seed for the corresponding best-point chain. If `NULL`, seeds are generated
+#'        deterministically from `seed` (if provided) or from a random base seed.
+#' @param combine_chains One of `"stack"` or `"none"`. Controls how the selected best-point
+#'        chains are summarized:
+#'        \itemize{
+#'          \item `"stack"`: stack post burn-in draws across all best-point chains, then compute
+#'                posterior means, credible intervals, and convergence diagnostics from the pooled draws.
+#'          \item `"none"`: summarize using only the first best-point chain.
+#'        }
+#'        Default `"stack"`.
 #'
 #' @return A list with components:
 #' \itemize{
 #'   \item `ref_predictor`: list with `index` (1-based in original `X`) and `name`.
-#'   \item `severity`: data.frame with per-*original* predictor severities used to anchor prior scales.
-#'   \item `grid_summary`: data.frame summarizing all grid runs
-#'         (`grid_id`, `mu`, `sigma_diag`, `kappa`, `acceptance_rate`,
-#'          `prop_matched`, `posterior_ratio_std`).
-#'   \item `best`: list describing the selected grid point
-#'         (`grid_id`, `mu`, `sigma_diag`, `kappa`,
-#'          `acceptance_rate`, `prop_matched`).
+#'   \item `severity`: data.frame with per-*original* predictor severities used to anchor prior scales:
+#'         columns `Predictor`, `Severity`.
+#'
+#'   \item `grid_summary`: data.frame summarizing all grid runs with columns:
+#'         \itemize{
+#'           \item `grid_id`: integer id for the grid point.
+#'           \item `mu`: character representation of the prior mean vector (intercept entry varies; others are 0).
+#'           \item `sigma_diag`: character representation of the diagonal of the prior scale matrix.
+#'           \item `kappa`: EP shape parameter used for that run.
+#'           \item `acceptance_rate`: MH acceptance rate.
+#'           \item `prop_matched`: posterior predictive agreement summary (proportion of observations with
+#'                 per-observation match probability >= 0.80, averaged).
+#'           \item `posterior_ratio_std`: character representation of standardized posterior mean ratios
+#'                 relative to the reference predictor (when defined).
+#'           \item `converged`: logical; convergence flag for this run (requires package `coda`, otherwise `NA`).
+#'           \item `ess_min`: numeric; minimum ESS across parameters for this run (requires `coda`, otherwise `NA`).
+#'           \item `geweke_max_abs`: numeric; maximum absolute Geweke z-score across parameters for this run
+#'                 (requires `coda`, otherwise `NA`).
+#'         }
+#'
+#'   \item `best`: list describing the selected grid point with elements:
+#'         `grid_id`, `mu`, `sigma_diag`, `kappa`, `acceptance_rate`, `prop_matched`,
+#'         and diagnostics copied from the selected run:
+#'         `converged`, `ess_min`, `geweke_max_abs`.
+#'
 #'   \item `posterior`: list with
 #'         \itemize{
-#'           \item `means_std`: posterior means on the standardized encoded design
-#'                 (length = intercept + encoded slopes),
-#'           \item `effects`: data.frame with per encoded column:
-#'                 `Predictor`, `Scaled`, `Scaled_CI_low`, `Scaled_CI_high`,
-#'                 plus **one optional trio** depending on `transform_back`:
-#'                 `b_logit_original`/`b_logit_CI_low`/`b_logit_CI_high` *or*
-#'                 `b_SAS_original`/`b_SAS_CI_low`/`b_SAS_CI_high` *or*
-#'                 `b_Long_original`/`b_Long_CI_low`/`b_Long_CI_high`.
+#'           \item `means_std`: posterior means on the working scale (intercept + standardized encoded slopes),
+#'                 length = `1 + p_enc`.
+#'           \item `effects`: data.frame with one row per encoded predictor column (slopes only) containing:
+#'                 \itemize{
+#'                   \item `Predictor`: encoded column name (from `model.matrix`, intercept excluded).
+#'                   \item `Scaled`: posterior mean on standardized encoded design.
+#'                   \item `Scaled_CI_low`, `Scaled_CI_high`: credible interval endpoints on the standardized scale.
+#'                   \item `sig_scaled`: logical; `TRUE` if the `Scaled` credible interval excludes 0.
+#'                   \item `star_scaled`: `"*"` if `sig_scaled` is `TRUE`, else `""`.
+#'                   \item If `transform_back = "logit"`: `b_logit_original`, `b_logit_CI_low`, `b_logit_CI_high`,
+#'                         plus `sig_original`, `star_original` computed from that interval.
+#'                   \item If `transform_back = "SAS"`:  `b_SAS_original`, `b_SAS_CI_low`, `b_SAS_CI_high`,
+#'                         plus `sig_original`, `star_original`.
+#'                   \item If `transform_back = "Long"`: `b_Long_original`, `b_Long_CI_low`, `b_Long_CI_high`,
+#'                         plus `sig_original`, `star_original`.
+#'                 }
 #'         }
+#'
+#'   \item `convergence`: list of diagnostics for the selected run (requires `coda`; otherwise entries are `NA`):
+#'         \itemize{
+#'           \item `ess`: numeric vector of ESS for each parameter (intercept + slopes).
+#'           \item `geweke_z`: numeric vector of Geweke z-scores for each parameter.
+#'           \item `ess_min`: minimum ESS across parameters.
+#'           \item `geweke_max_abs`: maximum absolute Geweke z-score across parameters.
+#'           \item `converged`: logical; `TRUE` if `ess_min >= ess_threshold` and
+#'                 `geweke_max_abs <= geweke_z_threshold`.
+#'         }
+#'   \item `diagnostics_multi`: list of multi-chain diagnostics for the best grid point.
+#'         Computed only when `n_chains_best >= 2` and package `coda` is available; otherwise NA.
+#'         \itemize{
+#'           \item `rhat`: numeric vector of Gelman-Rubin point estimates (one per parameter).
+#'           \item `rhat_max`: maximum R-hat across parameters.
+#'           \item `ess`: numeric vector of effective sample sizes from the multi-chain object.
+#'           \item `ess_min`: minimum ESS across parameters.
+#'         }
+#'
+#'   \item `best_chains`: summary of per-chain diagnostics and performance for the best grid point:
+#'         \itemize{
+#'           \item `diagnostics`: list of per-chain single-chain diagnostics (ESS, Geweke, etc).
+#'           \item `acceptance_rate`: numeric vector, one per chain.
+#'           \item `prop_matched`: numeric vector, one per chain.
+#'           \item `chain_seeds`: integer vector of seeds used.
+#'         }
+#'
+#'   \item `best$diagnostics_multi`: a copy of `diagnostics_multi` stored inside `best` for convenience.
+#'
 #'   \item `draws`: matrix of MH draws after burn-in for the selected run
 #'         (returned only when `return_draws = TRUE`).
 #' }
@@ -148,7 +216,7 @@
 #' @seealso `DISCO::uni_separation`, `DISCO::latent_separation`
 #'
 #' @importFrom DISCO uni_separation
-#' @importFrom stats glm binomial coef plogis qlogis sd model.matrix terms median quantile
+#' @importFrom stats glm binomial coef plogis qlogis sd model.matrix terms median quantile rbinom complete.cases
 #' @examples
 #' \donttest{
 #' ## Toy data with one numeric factor and one 2-level factor
@@ -238,6 +306,19 @@
 #' head(fit$grid_summary)
 #' fit$best
 #' }
+#'
+#' ## 7) Rerun the selected best grid point with multiple chains
+#' fit_multi <- MEP_mixture(
+#'   y, X_toy,
+#'   n_iter_grid = 4000, burn_in_grid = 1000,
+#'   n_chains_best = 4,
+#'   chain_seeds_best = c(101, 102, 103, 104),
+#'   combine_chains = "stack",
+#'   transform_back = "none",
+#'   seed = 9
+#' )
+#' fit_multi$diagnostics_multi
+#' head(fit_multi$posterior$effects)
 #' @export
 MEP_mixture <- function(
     y, X,
@@ -263,7 +344,10 @@ MEP_mixture <- function(
     seed = NULL,
     return_draws = FALSE,
     ess_threshold = 150,
-    geweke_z_threshold = 2
+    geweke_z_threshold = 2,
+    n_chains_best = 1,
+    chain_seeds_best = NULL,
+    combine_chains = c("stack","none")
 ) {
 
   `%||%` <- function(a, b) if (!is.null(a)) a else b
@@ -303,11 +387,26 @@ MEP_mixture <- function(
 
   scale_if_num <- function(v) if (is.numeric(v)) as.numeric(scale(v)) else v
 
-  # robust match.arg
   missing <- base::match.arg(as.character(missing), choices = c("complete","impute"))
   transform_back <- base::match.arg(as.character(transform_back), choices = c("none","logit","SAS","Long"))
+  combine_chains <- base::match.arg(as.character(combine_chains), choices = c("stack","none"))
 
   if (!is.null(seed)) set.seed(as.integer(seed))
+
+  if (!is.numeric(n_chains_best) || length(n_chains_best) != 1 || n_chains_best < 1) {
+    stop("`n_chains_best` must be a positive integer.", call. = FALSE)
+  }
+  n_chains_best <- as.integer(n_chains_best)
+
+  if (!is.null(chain_seeds_best)) {
+    if (length(chain_seeds_best) != n_chains_best) {
+      stop("`chain_seeds_best` must have length `n_chains_best`.", call. = FALSE)
+    }
+    chain_seeds_best <- as.integer(chain_seeds_best)
+  } else {
+    base_seed <- if (!is.null(seed)) as.integer(seed) else sample.int(1e9, 1)
+    chain_seeds_best <- base_seed + seq_len(n_chains_best)
+  }
 
   # normalize y
   if (!is.numeric(y)) {
@@ -317,7 +416,7 @@ MEP_mixture <- function(
   }
   y <- as.numeric(y)
 
-  # data prep (shared for modeling & DISCO)
+  # data prep
   X_df <- as.data.frame(X, stringsAsFactors = TRUE)
   stopifnot(nrow(X_df) == length(y))
 
@@ -335,8 +434,8 @@ MEP_mixture <- function(
   if (ncol(X_df) < 1L) stop("X must have at least one predictor.", call. = FALSE)
   if (length(y) < 2L || length(unique(y)) < 2L) stop("Outcome must contain both 0 and 1 after missing handling.", call. = FALSE)
 
-  # encoded design (no intercept), and mapping to original terms
-  mm <- stats::model.matrix(~ . , data = X_df)  # includes intercept
+  # encoded design
+  mm <- stats::model.matrix(~ . , data = X_df)
   assign_vec <- attr(mm, "assign")
   term_labs  <- attr(stats::terms(~ . , data = X_df), "term.labels")
   X_mm <- mm[, -1, drop = FALSE]
@@ -344,7 +443,7 @@ MEP_mixture <- function(
   p_enc <- ncol(X_mm)
   p_terms <- length(term_labs)
 
-  # univariate severities per original predictor (prepared data; numeric predictors scaled)
+  # severities
   sev_vec <- rep(0, p_terms)
   for (j in seq_len(p_terms)) {
     pred <- scale_if_num(X_df[[term_labs[j]]])
@@ -361,7 +460,7 @@ MEP_mixture <- function(
   }
   sev_df <- data.frame(Predictor = term_labs, Severity = sev_vec, stringsAsFactors = FALSE)
 
-  # reference predictor (by highest severity unless specified)
+  # reference predictor
   if (is.null(ref)) {
     ref_idx_term <- which.max(sev_vec)
   } else if (is.character(ref)) {
@@ -375,9 +474,8 @@ MEP_mixture <- function(
   ref_name <- term_labs[ref_idx_term]
   ref_enc_cols <- which(assign_mm == ref_idx_term)
   if (!length(ref_enc_cols)) stop("Internal: no encoded columns for selected `ref` predictor.", call. = FALSE)
-  ref_pos_enc <- 1 + ref_enc_cols[1]  # position in beta including intercept
+  ref_pos_enc <- 1 + ref_enc_cols[1]
 
-  # map severity -> anchor sigma/kappa
   map_uni_severity <- function(s, sigma_hi, sigma_lo, kappa_min, kappa_max) {
     s <- max(0, min(1, as.numeric(s)))
     sigma <- exp((1 - s) * log(sigma_hi) + s * log(sigma_lo))
@@ -409,10 +507,104 @@ MEP_mixture <- function(
   sigma_grid <- lapply(sigma_global_multipliers, build_sigma_diag, sigma0_intercept = sigma0_intercept)
   kappa_grid <- pmax(0.5, pmin(3.0, kappa_anchor_mean + kappa_delta))
 
+  summarize_post <- function(post, X_enc, transform_back, ci_level, ess_threshold, geweke_z_threshold) {
+    qlo <- (1 - ci_level) / 2
+    qhi <- 1 - qlo
+    qfun <- function(M) t(apply(M, 2, stats::quantile, probs = c(qlo, qhi), na.rm = TRUE))
+
+    draws_scaled <- post[, -1, drop = FALSE]
+    scaled_mean <- colMeans(draws_scaled)
+    scaled_ci <- qfun(draws_scaled)
+
+    s_x <- apply(X_enc, 2, stats::sd)
+    s_x[!is.finite(s_x) | s_x == 0] <- 1
+    draws_logit <- sweep(draws_scaled, 2, s_x, "/")
+
+    logit_sd <- pi / sqrt(3)
+    draws_SAS  <- draws_logit * logit_sd
+    draws_Long <- draws_logit * (logit_sd + 1)
+
+    effects <- data.frame(
+      Predictor      = colnames(X_enc),
+      Scaled         = scaled_mean,
+      Scaled_CI_low  = scaled_ci[, 1],
+      Scaled_CI_high = scaled_ci[, 2],
+      row.names = NULL,
+      check.names = FALSE
+    )
+
+    effects$sig_scaled <- with(
+      effects,
+      (Scaled_CI_low > 0 & Scaled_CI_high > 0) | (Scaled_CI_low < 0 & Scaled_CI_high < 0)
+    )
+    effects$star_scaled <- ifelse(effects$sig_scaled, "*", "")
+
+    if (transform_back == "logit") {
+      ci_bt <- qfun(draws_logit)
+      effects$b_logit_original <- colMeans(draws_logit)
+      effects$b_logit_CI_low   <- ci_bt[, 1]
+      effects$b_logit_CI_high  <- ci_bt[, 2]
+      effects$sig_original <- (effects$b_logit_CI_low > 0 & effects$b_logit_CI_high > 0) |
+        (effects$b_logit_CI_low < 0 & effects$b_logit_CI_high < 0)
+      effects$star_original <- ifelse(effects$sig_original, "*", "")
+    } else if (transform_back == "SAS") {
+      ci_bt <- qfun(draws_SAS)
+      effects$b_SAS_original <- colMeans(draws_SAS)
+      effects$b_SAS_CI_low   <- ci_bt[, 1]
+      effects$b_SAS_CI_high  <- ci_bt[, 2]
+      effects$sig_original <- (effects$b_SAS_CI_low > 0 & effects$b_SAS_CI_high > 0) |
+        (effects$b_SAS_CI_low < 0 & effects$b_SAS_CI_high < 0)
+      effects$star_original <- ifelse(effects$sig_original, "*", "")
+    } else if (transform_back == "Long") {
+      ci_bt <- qfun(draws_Long)
+      effects$b_Long_original <- colMeans(draws_Long)
+      effects$b_Long_CI_low   <- ci_bt[, 1]
+      effects$b_Long_CI_high  <- ci_bt[, 2]
+      effects$sig_original <- (effects$b_Long_CI_low > 0 & effects$b_Long_CI_high > 0) |
+        (effects$b_Long_CI_low < 0 & effects$b_Long_CI_high < 0)
+      effects$star_original <- ifelse(effects$sig_original, "*", "")
+    }
+
+    ess <- rep(NA_real_, ncol(post))
+    geweke_z <- rep(NA_real_, ncol(post))
+    converged_flag <- NA
+    ess_min <- NA_real_
+    geweke_max_abs <- NA_real_
+
+    if (requireNamespace("coda", quietly = TRUE)) {
+      mcmc_obj <- coda::mcmc(post)
+      ess <- as.numeric(coda::effectiveSize(mcmc_obj))
+      gz  <- coda::geweke.diag(mcmc_obj)$z
+      geweke_z <- as.numeric(gz)
+
+      ess_min <- suppressWarnings(min(ess, na.rm = TRUE))
+      geweke_max_abs <- suppressWarnings(max(abs(geweke_z), na.rm = TRUE))
+
+      ess_ok <- is.finite(ess_min) && ess_min >= ess_threshold
+      geweke_ok <- is.finite(geweke_max_abs) && geweke_max_abs <= geweke_z_threshold
+      converged_flag <- isTRUE(ess_ok && geweke_ok)
+    }
+
+    list(
+      pm = colMeans(post),
+      effects = effects,
+      diagnostics = list(
+        ess = ess,
+        geweke_z = geweke_z,
+        ess_min = ess_min,
+        geweke_max_abs = geweke_max_abs,
+        converged = converged_flag
+      )
+    )
+  }
+
   run_MH_sampler <- function(
     n_iter, init_beta, step_size, X_enc, y, mu, Sigma, kappa,
-    burn_in = 1000, transform_back, ci_level, ess_threshold, geweke_z_threshold
+    burn_in = 1000, transform_back, ci_level, ess_threshold, geweke_z_threshold,
+    chain_seed = NULL
   ) {
+    if (!is.null(chain_seed)) set.seed(as.integer(chain_seed))
+
     Xstd <- scale(X_enc)
     X <- cbind(Intercept = 1, Xstd)
 
@@ -466,76 +658,6 @@ MEP_mixture <- function(
     }
 
     post <- chain[(burn_in + 1):n_iter, , drop = FALSE]
-    pm   <- colMeans(post)
-
-    # CIs helper
-    qlo <- (1 - ci_level) / 2
-    qhi <- 1 - qlo
-    qfun <- function(M) t(apply(M, 2, stats::quantile, probs = c(qlo, qhi), na.rm = TRUE))
-
-    # standardized slopes (drop intercept)
-    draws_scaled <- post[, -1, drop = FALSE]
-    scaled_mean  <- colMeans(draws_scaled)
-    scaled_ci    <- qfun(draws_scaled)
-
-    # back-transforms for encoded columns (draw-by-draw)
-    s_x <- apply(X_enc, 2, stats::sd)
-    s_x[!is.finite(s_x) | s_x == 0] <- 1
-    draws_logit <- sweep(draws_scaled, 2, s_x, "/")
-
-    logit_sd <- pi / sqrt(3)
-    draws_SAS  <- draws_logit * logit_sd
-    draws_Long <- draws_logit * (logit_sd + 1)
-
-    # effects table (scaled)
-    effects <- data.frame(
-      Predictor      = colnames(X_enc),
-      Scaled         = scaled_mean,
-      Scaled_CI_low  = scaled_ci[, 1],
-      Scaled_CI_high = scaled_ci[, 2],
-      row.names = NULL,
-      check.names = FALSE
-    )
-
-    # star on scaled
-    effects$sig_scaled <- with(
-      effects,
-      (Scaled_CI_low > 0 & Scaled_CI_high > 0) | (Scaled_CI_low < 0 & Scaled_CI_high < 0)
-    )
-    effects$star_scaled <- ifelse(effects$sig_scaled, "*", "")
-
-    # attach one chosen back-transform trio, and stars on that scale too
-    bt_means <- list(
-      logit = colMeans(draws_logit),
-      SAS   = colMeans(draws_SAS),
-      Long  = colMeans(draws_Long)
-    )
-
-    if (transform_back == "logit") {
-      ci_bt <- qfun(draws_logit)
-      effects$b_logit_original <- bt_means$logit
-      effects$b_logit_CI_low   <- ci_bt[, 1]
-      effects$b_logit_CI_high  <- ci_bt[, 2]
-      effects$sig_original <- (effects$b_logit_CI_low > 0 & effects$b_logit_CI_high > 0) |
-        (effects$b_logit_CI_low < 0 & effects$b_logit_CI_high < 0)
-      effects$star_original <- ifelse(effects$sig_original, "*", "")
-    } else if (transform_back == "SAS") {
-      ci_bt <- qfun(draws_SAS)
-      effects$b_SAS_original <- bt_means$SAS
-      effects$b_SAS_CI_low   <- ci_bt[, 1]
-      effects$b_SAS_CI_high  <- ci_bt[, 2]
-      effects$sig_original <- (effects$b_SAS_CI_low > 0 & effects$b_SAS_CI_high > 0) |
-        (effects$b_SAS_CI_low < 0 & effects$b_SAS_CI_high < 0)
-      effects$star_original <- ifelse(effects$sig_original, "*", "")
-    } else if (transform_back == "Long") {
-      ci_bt <- qfun(draws_Long)
-      effects$b_Long_original <- bt_means$Long
-      effects$b_Long_CI_low   <- ci_bt[, 1]
-      effects$b_Long_CI_high  <- ci_bt[, 2]
-      effects$sig_original <- (effects$b_Long_CI_low > 0 & effects$b_Long_CI_high > 0) |
-        (effects$b_Long_CI_low < 0 & effects$b_Long_CI_high < 0)
-      effects$star_original <- ifelse(effects$sig_original, "*", "")
-    }
 
     # posterior predictive check
     n_rep <- nrow(post)
@@ -549,41 +671,22 @@ MEP_mixture <- function(
     prop_matched <- mean(p_match >= 0.80, na.rm = TRUE)
     if (!is.finite(prop_matched)) prop_matched <- 0
 
-    # convergence diagnostics (single-chain; optional)
-    ess <- rep(NA_real_, ncol(post))
-    geweke_z <- rep(NA_real_, ncol(post))
-    converged_flag <- NA
-    ess_min <- NA_real_
-    geweke_max_abs <- NA_real_
-
-    if (requireNamespace("coda", quietly = TRUE)) {
-      mcmc_obj <- coda::mcmc(post)
-      ess <- as.numeric(coda::effectiveSize(mcmc_obj))
-      gz  <- coda::geweke.diag(mcmc_obj)$z
-      geweke_z <- as.numeric(gz)
-
-      ess_min <- suppressWarnings(min(ess, na.rm = TRUE))
-      geweke_max_abs <- suppressWarnings(max(abs(geweke_z), na.rm = TRUE))
-
-      ess_ok <- is.finite(ess_min) && ess_min >= ess_threshold
-      geweke_ok <- is.finite(geweke_max_abs) && geweke_max_abs <= geweke_z_threshold
-      converged_flag <- isTRUE(ess_ok && geweke_ok)
-    }
+    sum_obj <- summarize_post(
+      post = post,
+      X_enc = X_enc,
+      transform_back = transform_back,
+      ci_level = ci_level,
+      ess_threshold = ess_threshold,
+      geweke_z_threshold = geweke_z_threshold
+    )
 
     list(
       chain = post,
-      pm = pm,
-      effects = effects,
-      bt = bt_means,
+      pm = sum_obj$pm,
+      effects = sum_obj$effects,
       prop_matched = prop_matched,
       acceptance_rate = acc / (n_iter - 1),
-      diagnostics = list(
-        ess = ess,
-        geweke_z = geweke_z,
-        ess_min = ess_min,
-        geweke_max_abs = geweke_max_abs,
-        converged = converged_flag
-      )
+      diagnostics = sum_obj$diagnostics
     )
   }
 
@@ -611,6 +714,8 @@ MEP_mixture <- function(
       sigma_str <- paste(round(diag(Sigma), 3), collapse = ", ")
       for (kappa in kappa_grid) {
 
+        grid_chain_seed <- if (!is.null(seed)) as.integer(seed) + gid else NULL
+
         res <- run_MH_sampler(
           n_iter = n_iter_grid,
           init_beta = init_beta,
@@ -624,7 +729,8 @@ MEP_mixture <- function(
           transform_back = transform_back,
           ci_level = ci_level,
           ess_threshold = ess_threshold,
-          geweke_z_threshold = geweke_z_threshold
+          geweke_z_threshold = geweke_z_threshold,
+          chain_seed = grid_chain_seed
         )
 
         vals <- res$pm
@@ -664,7 +770,7 @@ MEP_mixture <- function(
     }
   }
 
-  # GLM ratios (on standardized encoded design)
+  # GLM ratios
   X_scaled <- scale(X_mm)
   glm_fit <- try(suppressWarnings(stats::glm(
     y ~ .,
@@ -727,11 +833,94 @@ MEP_mixture <- function(
   }
 
   best_id <- z2$grid_id[1]
-  best_run <- runs[[best_id]]
   best_row <- z[z$grid_id == best_id, , drop = FALSE]
 
-  effects <- best_run$effects
-  pm <- best_run$pm
+  # decode best grid indices
+  n_mu <- length(mu_grid)
+  n_sigma <- length(sigma_grid)
+  n_kappa <- length(kappa_grid)
+
+  id0 <- best_id - 1L
+  i_mu <- (id0 %/% (n_sigma * n_kappa)) + 1L
+  rem <- id0 %% (n_sigma * n_kappa)
+  i_sigma <- (rem %/% n_kappa) + 1L
+  i_kappa <- (rem %% n_kappa) + 1L
+
+  mu_best <- mu_grid[[i_mu]]
+  Sigma_best <- sigma_grid[[i_sigma]]
+  kappa_best <- kappa_grid[[i_kappa]]
+
+  # rerun best with multiple chains
+  best_chains <- vector("list", n_chains_best)
+  for (ch in seq_len(n_chains_best)) {
+    best_chains[[ch]] <- run_MH_sampler(
+      n_iter = n_iter_grid,
+      init_beta = init_beta,
+      step_size = step_size,
+      X_enc = X_mm,
+      y = y,
+      mu = mu_best,
+      Sigma = Sigma_best,
+      kappa = kappa_best,
+      burn_in = burn_in_grid,
+      transform_back = transform_back,
+      ci_level = ci_level,
+      ess_threshold = ess_threshold,
+      geweke_z_threshold = geweke_z_threshold,
+      chain_seed = chain_seeds_best[ch]
+    )
+  }
+
+  prop_matched_best <- mean(vapply(best_chains, function(x) x$prop_matched, numeric(1)), na.rm = TRUE)
+  acc_best <- mean(vapply(best_chains, function(x) x$acceptance_rate, numeric(1)), na.rm = TRUE)
+
+  # multi-chain diagnostics (Rhat + multi-chain ESS)
+  diagnostics_multi <- list(
+    rhat = rep(NA_real_, ncol(best_chains[[1]]$chain)),
+    rhat_max = NA_real_,
+    ess = rep(NA_real_, ncol(best_chains[[1]]$chain)),
+    ess_min = NA_real_
+  )
+
+  if (requireNamespace("coda", quietly = TRUE) && n_chains_best >= 2) {
+    mlist <- coda::mcmc.list(lapply(best_chains, function(x) coda::mcmc(x$chain)))
+
+    gd <- coda::gelman.diag(mlist, autoburnin = FALSE, multivariate = FALSE)$psrf
+    diagnostics_multi$rhat <- as.numeric(gd[, "Point est."])
+    diagnostics_multi$rhat_max <- suppressWarnings(max(diagnostics_multi$rhat, na.rm = TRUE))
+
+    ess_m <- coda::effectiveSize(mlist)
+    diagnostics_multi$ess <- as.numeric(ess_m)
+    diagnostics_multi$ess_min <- suppressWarnings(min(diagnostics_multi$ess, na.rm = TRUE))
+  }
+
+  # combine for final posterior summary
+  if (combine_chains == "stack") {
+    post_all <- do.call(rbind, lapply(best_chains, `[[`, "chain"))
+    sum_all <- summarize_post(
+      post = post_all,
+      X_enc = X_mm,
+      transform_back = transform_back,
+      ci_level = ci_level,
+      ess_threshold = ess_threshold,
+      geweke_z_threshold = geweke_z_threshold
+    )
+    pm <- sum_all$pm
+    effects <- sum_all$effects
+    best_diag <- sum_all$diagnostics
+    convergence_out <- best_diag
+  } else {
+    pm <- best_chains[[1]]$pm
+    effects <- best_chains[[1]]$effects
+    best_diag <- best_chains[[1]]$diagnostics
+    convergence_out <- best_diag
+  }
+
+  draws_out <- NULL
+  if (isTRUE(return_draws)) {
+    if (n_chains_best == 1L) draws_out <- best_chains[[1]]$chain
+    else draws_out <- lapply(best_chains, `[[`, "chain")
+  }
 
   list(
     ref_predictor = list(index = ref_idx_term, name = ref_name),
@@ -742,17 +931,28 @@ MEP_mixture <- function(
       mu = best_row$mu,
       sigma_diag = best_row$sigma_diag,
       kappa = best_row$kappa,
-      acceptance_rate = best_row$acceptance_rate,
-      prop_matched = best_row$prop_matched,
-      converged = best_run$diagnostics$converged,
-      ess_min = best_run$diagnostics$ess_min,
-      geweke_max_abs = best_run$diagnostics$geweke_max_abs
+      acceptance_rate = acc_best,
+      prop_matched = prop_matched_best,
+      converged = best_diag$converged,
+      ess_min = best_diag$ess_min,
+      geweke_max_abs = best_diag$geweke_max_abs,
+      n_chains_best = n_chains_best,
+      chain_seeds_best = chain_seeds_best,
+      combine_chains = combine_chains,
+      diagnostics_multi = diagnostics_multi
     ),
     posterior = list(
       means_std = pm,
       effects = effects
     ),
-    convergence = best_run$diagnostics,
-    draws = if (isTRUE(return_draws)) best_run$chain else NULL
+    convergence = convergence_out,
+    diagnostics_multi = diagnostics_multi,
+    best_chains = list(
+      diagnostics = lapply(best_chains, function(x) x$diagnostics),
+      acceptance_rate = vapply(best_chains, function(x) x$acceptance_rate, numeric(1)),
+      prop_matched = vapply(best_chains, function(x) x$prop_matched, numeric(1)),
+      chain_seeds = chain_seeds_best
+    ),
+    draws = draws_out
   )
 }

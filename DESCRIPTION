@@ -13,11 +13,14 @@ Imports:
     dplyr,
     clue,
     overlapping,
-    rlang
+    rlang,
+    stats
 Suggests:
     testthat (>= 3.0.0),
     knitr,
-    rmarkdown
+    rmarkdown,
+    coda,
+    gt
 Config/testthat/edition: 3
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.3

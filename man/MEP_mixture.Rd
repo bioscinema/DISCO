@@ -29,7 +29,10 @@ MEP_mixture(
   seed = NULL,
   return_draws = FALSE,
   ess_threshold = 150,
-  geweke_z_threshold = 2
+  geweke_z_threshold = 2,
+  n_chains_best = 1,
+  chain_seeds_best = NULL,
+  combine_chains = c("stack", "none")
 )
 }
 \arguments{
@@ -103,29 +106,101 @@ parameters) to declare convergence when \code{coda} is available. Default \code{
 
 \item{geweke_z_threshold}{Numeric; maximum allowed absolute Geweke z-score (across all
 parameters) to declare convergence when \code{coda} is available. Default \code{2}.}
+
+\item{n_chains_best}{Integer; number of independent MH chains to rerun for the selected
+best grid point only. Default \code{1}. When \code{n_chains_best >= 2} and package \code{coda}
+is available, multi-chain diagnostics (Gelman-Rubin R-hat and ESS) are computed.}
+
+\item{chain_seeds_best}{Optional integer vector of length \code{n_chains_best}. Each value is used
+as the RNG seed for the corresponding best-point chain. If \code{NULL}, seeds are generated
+deterministically from \code{seed} (if provided) or from a random base seed.}
+
+\item{combine_chains}{One of \code{"stack"} or \code{"none"}. Controls how the selected best-point
+chains are summarized:
+\itemize{
+\item \code{"stack"}: stack post burn-in draws across all best-point chains, then compute
+posterior means, credible intervals, and convergence diagnostics from the pooled draws.
+\item \code{"none"}: summarize using only the first best-point chain.
+}
+Default \code{"stack"}.}
 }
 \value{
 A list with components:
 \itemize{
 \item \code{ref_predictor}: list with \code{index} (1-based in original \code{X}) and \code{name}.
-\item \code{severity}: data.frame with per-\emph{original} predictor severities used to anchor prior scales.
-\item \code{grid_summary}: data.frame summarizing all grid runs
-(\code{grid_id}, \code{mu}, \code{sigma_diag}, \code{kappa}, \code{acceptance_rate},
-\code{prop_matched}, \code{posterior_ratio_std}).
-\item \code{best}: list describing the selected grid point
-(\code{grid_id}, \code{mu}, \code{sigma_diag}, \code{kappa},
-\code{acceptance_rate}, \code{prop_matched}).
+\item \code{severity}: data.frame with per-\emph{original} predictor severities used to anchor prior scales:
+columns \code{Predictor}, \code{Severity}.
+
+\item \code{grid_summary}: data.frame summarizing all grid runs with columns:
+\itemize{
+\item \code{grid_id}: integer id for the grid point.
+\item \code{mu}: character representation of the prior mean vector (intercept entry varies; others are 0).
+\item \code{sigma_diag}: character representation of the diagonal of the prior scale matrix.
+\item \code{kappa}: EP shape parameter used for that run.
+\item \code{acceptance_rate}: MH acceptance rate.
+\item \code{prop_matched}: posterior predictive agreement summary (proportion of observations with
+per-observation match probability >= 0.80, averaged).
+\item \code{posterior_ratio_std}: character representation of standardized posterior mean ratios
+relative to the reference predictor (when defined).
+\item \code{converged}: logical; convergence flag for this run (requires package \code{coda}, otherwise \code{NA}).
+\item \code{ess_min}: numeric; minimum ESS across parameters for this run (requires \code{coda}, otherwise \code{NA}).
+\item \code{geweke_max_abs}: numeric; maximum absolute Geweke z-score across parameters for this run
+(requires \code{coda}, otherwise \code{NA}).
+}
+
+\item \code{best}: list describing the selected grid point with elements:
+\code{grid_id}, \code{mu}, \code{sigma_diag}, \code{kappa}, \code{acceptance_rate}, \code{prop_matched},
+and diagnostics copied from the selected run:
+\code{converged}, \code{ess_min}, \code{geweke_max_abs}.
+
 \item \code{posterior}: list with
 \itemize{
-\item \code{means_std}: posterior means on the standardized encoded design
-(length = intercept + encoded slopes),
-\item \code{effects}: data.frame with per encoded column:
-\code{Predictor}, \code{Scaled}, \code{Scaled_CI_low}, \code{Scaled_CI_high},
-plus \strong{one optional trio} depending on \code{transform_back}:
-\code{b_logit_original}/\code{b_logit_CI_low}/\code{b_logit_CI_high} \emph{or}
-\code{b_SAS_original}/\code{b_SAS_CI_low}/\code{b_SAS_CI_high} \emph{or}
-\code{b_Long_original}/\code{b_Long_CI_low}/\code{b_Long_CI_high}.
+\item \code{means_std}: posterior means on the working scale (intercept + standardized encoded slopes),
+length = \code{1 + p_enc}.
+\item \code{effects}: data.frame with one row per encoded predictor column (slopes only) containing:
+\itemize{
+\item \code{Predictor}: encoded column name (from \code{model.matrix}, intercept excluded).
+\item \code{Scaled}: posterior mean on standardized encoded design.
+\item \code{Scaled_CI_low}, \code{Scaled_CI_high}: credible interval endpoints on the standardized scale.
+\item \code{sig_scaled}: logical; \code{TRUE} if the \code{Scaled} credible interval excludes 0.
+\item \code{star_scaled}: \code{"*"} if \code{sig_scaled} is \code{TRUE}, else \code{""}.
+\item If \code{transform_back = "logit"}: \code{b_logit_original}, \code{b_logit_CI_low}, \code{b_logit_CI_high},
+plus \code{sig_original}, \code{star_original} computed from that interval.
+\item If \code{transform_back = "SAS"}:  \code{b_SAS_original}, \code{b_SAS_CI_low}, \code{b_SAS_CI_high},
+plus \code{sig_original}, \code{star_original}.
+\item If \code{transform_back = "Long"}: \code{b_Long_original}, \code{b_Long_CI_low}, \code{b_Long_CI_high},
+plus \code{sig_original}, \code{star_original}.
 }
+}
+
+\item \code{convergence}: list of diagnostics for the selected run (requires \code{coda}; otherwise entries are \code{NA}):
+\itemize{
+\item \code{ess}: numeric vector of ESS for each parameter (intercept + slopes).
+\item \code{geweke_z}: numeric vector of Geweke z-scores for each parameter.
+\item \code{ess_min}: minimum ESS across parameters.
+\item \code{geweke_max_abs}: maximum absolute Geweke z-score across parameters.
+\item \code{converged}: logical; \code{TRUE} if \code{ess_min >= ess_threshold} and
+\code{geweke_max_abs <= geweke_z_threshold}.
+}
+\item \code{diagnostics_multi}: list of multi-chain diagnostics for the best grid point.
+Computed only when \code{n_chains_best >= 2} and package \code{coda} is available; otherwise NA.
+\itemize{
+\item \code{rhat}: numeric vector of Gelman-Rubin point estimates (one per parameter).
+\item \code{rhat_max}: maximum R-hat across parameters.
+\item \code{ess}: numeric vector of effective sample sizes from the multi-chain object.
+\item \code{ess_min}: minimum ESS across parameters.
+}
+
+\item \code{best_chains}: summary of per-chain diagnostics and performance for the best grid point:
+\itemize{
+\item \code{diagnostics}: list of per-chain single-chain diagnostics (ESS, Geweke, etc).
+\item \code{acceptance_rate}: numeric vector, one per chain.
+\item \code{prop_matched}: numeric vector, one per chain.
+\item \code{chain_seeds}: integer vector of seeds used.
+}
+
+\item \code{best$diagnostics_multi}: a copy of \code{diagnostics_multi} stored inside \code{best} for convenience.
+
 \item \code{draws}: matrix of MH draws after burn-in for the selected run
 (returned only when \code{return_draws = TRUE}).
 }
@@ -291,6 +366,19 @@ fit$severity
 head(fit$grid_summary)
 fit$best
 }
+
+## 7) Rerun the selected best grid point with multiple chains
+fit_multi <- MEP_mixture(
+  y, X_toy,
+  n_iter_grid = 4000, burn_in_grid = 1000,
+  n_chains_best = 4,
+  chain_seeds_best = c(101, 102, 103, 104),
+  combine_chains = "stack",
+  transform_back = "none",
+  seed = 9
+)
+fit_multi$diagnostics_multi
+head(fit_multi$posterior$effects)
 }
 \seealso{
 \code{DISCO::uni_separation}, \code{DISCO::latent_separation}
