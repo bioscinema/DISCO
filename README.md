@@ -342,6 +342,28 @@ fit_i <- MEP_latent(
 )
 fit_i$rows_used
 head(fit_i$scaled_summary)
+
+## Single Chain
+fit_single <- MEP_latent(
+  y, X,
+  n_iter = 10000, burn_in = 1000, init_beta = 0.01,
+  seed = 9
+)
+fit_single$scaled_summary
+fit_single$convergence
+
+## Multiple Chains
+fit_multi <- MEP_latent(
+  y, X,
+  n_iter = 10000, burn_in = 1000, init_beta = 0.01,
+  n_chains_best = 4,
+  chain_seeds_best = c(101, 102, 103, 104),
+  combine_chains = "stack",
+  seed = 9
+)
+fit_multi$scaled_summary
+fit_multi$diagnostics_multi
+
 ```
 
 ---

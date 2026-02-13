@@ -11,6 +11,7 @@ MEP_latent(
   impute_args = list(),
   n_iter = 10000,
   burn_in = 1000,
+  init_beta = 0.01,
   step_size = 0.4,
   mu_vals = seq(-1, 1, by = 0.1),
   sigma0_intercept = 10,
@@ -24,7 +25,13 @@ MEP_latent(
   tune_threshold_lo = 0.2,
   tune_interval = 500,
   verbose = FALSE,
-  seed = NULL
+  seed = NULL,
+  n_chains_best = 1,
+  chain_seeds_best = NULL,
+  combine_chains = c("stack", "none"),
+  return_draws = FALSE,
+  ess_threshold = 150,
+  geweke_z_threshold = 2
 )
 }
 \arguments{
@@ -51,6 +58,10 @@ Default \code{10000}.}
 
 \item{burn_in}{Integer; burn-in iterations discarded from the front.
 Default \code{1000}.}
+
+\item{init_beta}{Initial value(s) for the MH chain. Either a scalar (recycled)
+or a numeric vector of length \eqn{p} (intercept + encoded slopes).
+Default \code{0.01}.}
 
 \item{step_size}{Proposal standard deviation for RW–MH. Default \code{0.40}.}
 
@@ -92,6 +103,26 @@ Default \code{500}.}
 \item{verbose}{Logical; print brief progress messages. Default \code{FALSE}.}
 
 \item{seed}{Optional integer; if provided, sets RNG seed for reproducibility.}
+
+\item{n_chains_best}{Integer; number of MH chains to rerun for the selected
+best grid point. Default \code{1}.}
+
+\item{chain_seeds_best}{Optional integer vector of length \code{n_chains_best}
+giving per-chain RNG seeds for the best-point reruns. If \code{NULL}, seeds
+are generated deterministically from \code{seed}.}
+
+\item{combine_chains}{How to combine the best-point chains for the final
+posterior summaries. \code{"stack"} binds post-burn draws across chains;
+\code{"none"} uses only the first chain. Default \code{"stack"}.}
+
+\item{return_draws}{Logical; if \code{TRUE}, return post-burn draws for the
+selected best grid point (a matrix if one chain, else a list of matrices).}
+
+\item{ess_threshold}{Minimum effective sample size required (across parameters)
+to declare convergence when \pkg{coda} is available. Default \code{150}.}
+
+\item{geweke_z_threshold}{Maximum allowed absolute Geweke z-score (across parameters)
+to declare convergence when \pkg{coda} is available. Default \code{2}.}
 }
 \value{
 A list with:
@@ -107,10 +138,16 @@ and back-transformed effects on
 \code{b_A_original}, \code{b_SAS_original}, \code{b_Long_original}.
 \item \code{scaled_summary}: data.frame (including Intercept) with columns
 \code{Mean}, \code{SD}, \code{CI_low}, \code{CI_high} in the working
-(logit/standardized) space.
+(logit/standardized) space, plus \code{Sig} and \code{Star} where
+stars are computed from nested 90/95/99 credible intervals.
 \item \code{ci_level}: credible interval level used.
 \item \code{rows_used}: integer indices of rows kept after missing handling.
 \item \code{missing_info}: list with \code{policy} and \code{imputed} flags.
+\item \code{diagnostics_multi}: list with multi-chain diagnostics (when \code{n_chains_best >= 2}
+and \pkg{coda} is available): \code{rhat}, \code{rhat_max}, \code{ess}, \code{ess_min}.
+\item \code{convergence}: list with single-posterior diagnostics for the final combined draws:
+\code{ess}, \code{geweke_z}, \code{ess_min}, \code{geweke_max_abs}, \code{converged}.
+\item \code{best}: list including \code{n_chains_best}, \code{chain_seeds_best}, and \code{combine_chains}.
 }
 }
 \description{
@@ -131,7 +168,9 @@ With \code{missing="impute"}, rows with NA in \code{y} are dropped, then each co
 \code{model.matrix()}, and the sampler runs on the standardized encoded design.
 
 \strong{Initialization.} The sampler starts at the prior mean \code{mu} for each grid
-point (no user-specified initial values).
+point (no user-specified initial values). Each MH chain starts at \code{init_beta} (scalar recycled)
+or a user-supplied vector of length \eqn{p}. When \code{n_chains_best > 1}, the
+selected grid point is rerun with independent seeds.
 
 \strong{Sampler & prior.}
 The (unnormalized) MEP prior is
@@ -154,6 +193,14 @@ Among all grid runs, candidates are those with acceptance in \code{accept_window
 (or closest to \code{accept_target} if none). When a GLM ratio is available, we prefer
 small mean absolute deviation from that ratio; ties are broken by higher posterior
 predictive agreement.
+
+\strong{Evidence flags (Sig and stars).}
+The returned \code{scaled_summary} includes \code{Sig}, which is \code{TRUE}
+when the (main) credible interval in the table excludes 0. In addition,
+\code{Star} is computed from nested credible intervals using posterior draws:
+\code{*} if the 90\\% interval excludes 0, \code{**} if the 95\\% interval excludes 0,
+and \code{***} if the 99\\% interval excludes 0.
+These are descriptive summaries of posterior uncertainty, not frequentist p-values.
 }
 \section{What this function does}{
 

@@ -59,6 +59,9 @@
 #'   Default \code{10000}.
 #' @param burn_in Integer; burn-in iterations discarded from the front.
 #'   Default \code{1000}.
+#' @param init_beta Initial value(s) for the MH chain. Either a scalar (recycled)
+#'   or a numeric vector of length \eqn{p} (intercept + encoded slopes).
+#'   Default \code{0.01}.
 #' @param step_size Proposal standard deviation for RW–MH. Default \code{0.40}.
 #'
 #' @param mu_vals Numeric vector; each value is repeated to length \eqn{p}
@@ -92,6 +95,20 @@
 #' @param tune_interval Iterations between tuning checks during burn-in.
 #'   Default \code{500}.
 #' @param verbose Logical; print brief progress messages. Default \code{FALSE}.
+#' @param n_chains_best Integer; number of MH chains to rerun for the selected
+#'   best grid point. Default \code{1}.
+#' @param chain_seeds_best Optional integer vector of length \code{n_chains_best}
+#'   giving per-chain RNG seeds for the best-point reruns. If \code{NULL}, seeds
+#'   are generated deterministically from \code{seed}.
+#' @param combine_chains How to combine the best-point chains for the final
+#'   posterior summaries. \code{"stack"} binds post-burn draws across chains;
+#'   \code{"none"} uses only the first chain. Default \code{"stack"}.
+#' @param return_draws Logical; if \code{TRUE}, return post-burn draws for the
+#'   selected best grid point (a matrix if one chain, else a list of matrices).
+#' @param ess_threshold Minimum effective sample size required (across parameters)
+#'   to declare convergence when \pkg{coda} is available. Default \code{150}.
+#' @param geweke_z_threshold Maximum allowed absolute Geweke z-score (across parameters)
+#'   to declare convergence when \pkg{coda} is available. Default \code{2}.
 #' @param seed Optional integer; if provided, sets RNG seed for reproducibility.
 #'
 #' @return A list with:
@@ -107,10 +124,17 @@
 #'         \code{b_A_original}, \code{b_SAS_original}, \code{b_Long_original}.
 #'   \item \code{scaled_summary}: data.frame (including Intercept) with columns
 #'         \code{Mean}, \code{SD}, \code{CI_low}, \code{CI_high} in the working
-#'         (logit/standardized) space.
+#'         (logit/standardized) space, plus \code{Sig} and \code{Star} where
+#'         stars are computed from nested 90/95/99 credible intervals.
 #'   \item \code{ci_level}: credible interval level used.
 #'   \item \code{rows_used}: integer indices of rows kept after missing handling.
 #'   \item \code{missing_info}: list with \code{policy} and \code{imputed} flags.
+#'   \item \code{diagnostics_multi}: list with multi-chain diagnostics (when \code{n_chains_best >= 2}
+#'         and \pkg{coda} is available): \code{rhat}, \code{rhat_max}, \code{ess}, \code{ess_min}.
+#'   \item \code{convergence}: list with single-posterior diagnostics for the final combined draws:
+#'         \code{ess}, \code{geweke_z}, \code{ess_min}, \code{geweke_max_abs}, \code{converged}.
+#'   \item \code{best}: list including \code{n_chains_best}, \code{chain_seeds_best}, and \code{combine_chains}.
+
 #' }
 #'
 #' @details
@@ -123,7 +147,9 @@
 #' \code{model.matrix()}, and the sampler runs on the standardized encoded design.
 #'
 #' \strong{Initialization.} The sampler starts at the prior mean \code{mu} for each grid
-#' point (no user-specified initial values).
+#' point (no user-specified initial values). Each MH chain starts at \code{init_beta} (scalar recycled)
+#' or a user-supplied vector of length \eqn{p}. When \code{n_chains_best > 1}, the
+#' selected grid point is rerun with independent seeds.
 #'
 #' \strong{Sampler & prior.}
 #' The (unnormalized) MEP prior is
@@ -146,6 +172,14 @@
 #' (or closest to \code{accept_target} if none). When a GLM ratio is available, we prefer
 #' small mean absolute deviation from that ratio; ties are broken by higher posterior
 #' predictive agreement.
+#'
+#' \strong{Evidence flags (Sig and stars).}
+#' The returned \code{scaled_summary} includes \code{Sig}, which is \code{TRUE}
+#' when the (main) credible interval in the table excludes 0. In addition,
+#' \code{Star} is computed from nested credible intervals using posterior draws:
+#' \code{*} if the 90\% interval excludes 0, \code{**} if the 95\% interval excludes 0,
+#' and \code{***} if the 99\% interval excludes 0.
+#' These are descriptive summaries of posterior uncertainty, not frequentist p-values.
 #'
 #' @seealso
 #' \code{\link{MEP_mixture}} for severity-anchored mixed predictors;
@@ -228,7 +262,9 @@ MEP_latent <- function(
     y, X,
     missing = c("complete","impute"),
     impute_args = list(),
-    n_iter = 10000, burn_in = 1000, step_size = 0.4,
+    n_iter = 10000, burn_in = 1000,
+    init_beta = 0.01,
+    step_size = 0.4,
     mu_vals = seq(-1, 1, by = 0.1),
     sigma0_intercept = 10,
     sigma_global_multipliers = c(0.1, 0.5, 1, 2, 5, 10),
@@ -241,10 +277,35 @@ MEP_latent <- function(
     tune_threshold_lo = 0.20,
     tune_interval = 500,
     verbose = FALSE,
-    seed = NULL
+    seed = NULL,
+    n_chains_best = 1,
+    chain_seeds_best = NULL,
+    combine_chains = c("stack","none"),
+    return_draws = FALSE,
+    ess_threshold = 150,
+    geweke_z_threshold = 2
 ) {
-  # ---- helpers ---------------------------------------------------------------
   `%||%` <- function(a, b) if (!is.null(a)) a else b
+
+  missing <- base::match.arg(as.character(missing), choices = c("complete","impute"))
+  combine_chains <- base::match.arg(as.character(combine_chains), choices = c("stack","none"))
+
+  if (!is.null(seed)) set.seed(as.integer(seed))
+
+  if (!is.numeric(n_chains_best) || length(n_chains_best) != 1 || n_chains_best < 1) {
+    stop("`n_chains_best` must be a positive integer.", call. = FALSE)
+  }
+  n_chains_best <- as.integer(n_chains_best)
+
+  if (!is.null(chain_seeds_best)) {
+    if (length(chain_seeds_best) != n_chains_best) {
+      stop("`chain_seeds_best` must have length `n_chains_best`.", call. = FALSE)
+    }
+    chain_seeds_best <- as.integer(chain_seeds_best)
+  } else {
+    base_seed <- if (!is.null(seed)) as.integer(seed) else sample.int(1e9, 1)
+    chain_seeds_best <- base_seed + seq_len(n_chains_best)
+  }
 
   impute_numeric <- function(v, method = "median") {
     if (!anyNA(v)) return(v)
@@ -262,7 +323,6 @@ MEP_latent <- function(
       lvl <- names(tab)[which.max(tab)]
       v[is.na(v)] <- factor(lvl, levels = levels(v))
     } else {
-      # All NA: create a "Missing" level
       v <- factor(v, levels = c(levels(v), "Missing"))
       v[is.na(v)] <- "Missing"
     }
@@ -272,147 +332,82 @@ MEP_latent <- function(
   safe_scale <- function(M) {
     cen <- suppressWarnings(colMeans(M))
     Xc  <- sweep(M, 2, cen, FUN = "-", check.margin = FALSE)
-    sc  <- suppressWarnings(apply(M, 2, sd))
+    sc  <- suppressWarnings(apply(M, 2, stats::sd))
     sc[!is.finite(sc) | sc == 0] <- 1
     Xs  <- sweep(Xc, 2, sc, FUN = "/", check.margin = FALSE)
     list(Xstd = Xs, center = cen, scale = sc)
   }
 
   log1pexp <- function(x) ifelse(x > 0, x + log1p(exp(-x)), log1p(exp(x)))
-  parse_ratio <- function(x) {
-    if (is.na(x) || !nzchar(x)) return(NA_real_)
-    as.numeric(strsplit(x, ",\\s*")[[1]])
+
+  qfun_mat <- function(M, ci_level) {
+    qlo <- (1 - ci_level) / 2
+    qhi <- 1 - qlo
+    t(apply(M, 2, stats::quantile, probs = c(qlo, qhi), na.rm = TRUE))
   }
 
-  # ---- setup -----------------------------------------------------------------
-  missing <- match.arg(missing)
-  if (!is.null(seed)) set.seed(as.integer(seed))
-
-  X_raw <- as.data.frame(X, stringsAsFactors = FALSE)
-  if (nrow(X_raw) != length(y)) stop("Rows of X must match length of y.", call. = FALSE)
-  if (ncol(X_raw) < 1L) stop("X must have at least one predictor.", call. = FALSE)
-
-  # Normalize y -> {0,1}
-  y_full <- y
-  if (is.logical(y_full)) y_full <- as.integer(y_full)
-  if (is.factor(y_full) || is.character(y_full)) y_full <- as.integer(factor(y_full)) - 1L
-  y_full <- as.numeric(y_full)
-
-  # shared missing handling (on RAW X, before encoding)
-  if (missing == "complete") {
-    keep_idx <- which(stats::complete.cases(data.frame(y = y_full, X_raw, check.names = FALSE)))
-    if (!length(keep_idx)) stop("No complete rows for y and X.", call. = FALSE)
-    y_used <- y_full[keep_idx]
-    X_used <- X_raw[keep_idx, , drop = FALSE]
-  } else {
-    keep_idx <- which(!is.na(y_full))
-    if (!length(keep_idx)) stop("No rows with observed y.", call. = FALSE)
-    y_used <- y_full[keep_idx]
-    X_used <- X_raw[keep_idx, , drop = FALSE]
-    num_method <- impute_args$numeric_method %||% "median"
-    fac_method <- impute_args$factor_method  %||% "mode"
-    for (j in seq_len(ncol(X_used))) {
-      v <- X_used[[j]]
-      if (is.numeric(v)) {
-        X_used[[j]] <- impute_numeric(v, method = num_method)
-      } else if (is.factor(v) || is.character(v) || is.logical(v)) {
-        if (!identical(fac_method, "mode"))
-          warning("Only factor_method = 'mode' is supported; using mode.")
-        X_used[[j]] <- impute_factor_mode(v)
-      } else {
-        # unknown type -> coerce then median-impute
-        v <- suppressWarnings(as.numeric(v))
-        X_used[[j]] <- impute_numeric(v, method = num_method)
-      }
-    }
-  }
-
-  if (length(unique(y_used)) < 2L) stop("Outcome must contain both 0 and 1 after missing handling.", call. = FALSE)
-
-  # Encode factors (treatment) -> numeric design; drop intercept
-  mm <- stats::model.matrix(~ ., data = X_used)  # adds intercept
-  X_df <- as.data.frame(mm[, -1, drop = FALSE])
-  colnames(X_df) <- make.names(colnames(X_df), unique = TRUE)
-  X_mat <- as.matrix(X_df)
-  p <- ncol(X_mat) + 1L
-
-  # ---- inner sampler (always uses standardized encoded predictors) -----------
-  run_mep <- function(n_iter, step_size, X_orig, y, mu, Sigma, kappa,
-                      burn_in, ci_level, ppc_threshold,
-                      tune_threshold_hi, tune_threshold_lo, tune_interval,
-                      verbose) {
-
-    S <- safe_scale(X_orig)
-    X_work <- S$Xstd
-    Xw <- cbind(Intercept = 1, X_work)
-
-    # Cholesky for Sigma
-    cholSigma <- try(chol(Sigma), silent = TRUE)
-    if (inherits(cholSigma, "try-error")) stop("Sigma is not positive-definite.")
-    qform <- function(v) { z <- backsolve(cholSigma, v, transpose = TRUE); sum(z * z) }
-
-    # start at prior mean mu
-    init_beta <- mu
-
-    log_post <- function(beta) {
-      eta <- as.vector(Xw %*% beta)
-      ll  <- sum(-y * log1pexp(-eta) - (1 - y) * log1pexp(eta))
-      diff <- beta - mu
-      ll - 0.5 * (qform(diff)^kappa)
-    }
-
-    MH <- function(n_iter, init_beta, step_size) {
-      d <- length(init_beta)
-      chain <- matrix(0, nrow = n_iter, ncol = d); chain[1, ] <- init_beta
-      cur_lp <- log_post(chain[1, ])
-      accept <- 0L; ss <- step_size
-      if (isTRUE(verbose)) message("RW–MH: ", n_iter, " iters; burn-in ", burn_in)
-      for (it in 2:n_iter) {
-        prop <- chain[it - 1, ] + ss * rnorm(d)
-        prop_lp <- log_post(prop)
-        if (log(runif(1)) < (prop_lp - cur_lp)) {
-          chain[it, ] <- prop; cur_lp <- prop_lp; accept <- accept + 1L
-        } else chain[it, ] <- chain[it - 1, ]
-        if (it <= burn_in && (it %% tune_interval) == 0) {
-          ar <- accept / it
-          if (ar > tune_threshold_hi) ss <- ss * 1.10
-          if (ar < tune_threshold_lo) ss <- ss * 0.90
-        }
-      }
-      list(chain = chain, acceptance_rate = accept / (n_iter - 1))
-    }
-
-    smp <- MH(n_iter, init_beta, step_size)
-    chain <- smp$chain; acc <- smp$acceptance_rate
-    post  <- chain[(burn_in + 1):n_iter, , drop = FALSE]
-
-    # summaries in working (standardized) space
+  summarize_post <- function(post, X_orig, ci_level, ppc_threshold, y, Xw) {
     pm  <- colMeans(post)
     se  <- apply(post, 2, stats::sd)
-    qlo <- (1 - ci_level) / 2; qhi <- 1 - qlo
-    qfun <- function(M) t(apply(M, 2, stats::quantile, probs = c(qlo, qhi), na.rm = TRUE))
-    ci_scaled <- qfun(post)
+    ci_scaled <- qfun_mat(post, ci_level)
+
     scaled_summary <- data.frame(
-      Param   = c("Intercept", colnames(X_orig)),
+      Param   = colnames(Xw),
       Mean    = pm,
       SD      = se,
       CI_low  = ci_scaled[, 1],
       CI_high = ci_scaled[, 2],
-      row.names = NULL, check.names = FALSE
+      row.names = NULL,
+      check.names = FALSE
     )
 
+    # stars based on nested credible intervals from posterior draws
+    ci_mat_for_level <- function(M, lvl) {
+      qlo <- (1 - lvl) / 2
+      qhi <- 1 - qlo
+      t(apply(M, 2, stats::quantile, probs = c(qlo, qhi), na.rm = TRUE))
+    }
+
+    ci90 <- ci_mat_for_level(post, 0.90)
+    ci95 <- ci_mat_for_level(post, 0.95)
+    ci99 <- ci_mat_for_level(post, 0.99)
+
+    star <- rep("", ncol(post))
+    star[(ci90[, 1] > 0) | (ci90[, 2] < 0)] <- "*"
+    star[(ci95[, 1] > 0) | (ci95[, 2] < 0)] <- "**"
+    star[(ci99[, 1] > 0) | (ci99[, 2] < 0)] <- "***"
+
+    # decide what "Sig" should mean
+    # Option A: match the main CI level used in the table
+    scaled_summary$Sig <- (scaled_summary$CI_low > 0) | (scaled_summary$CI_high < 0)
+
+    # Option B: always use 95% for Sig (then rename it)
+    # scaled_summary$Sig_95 <- (ci95[, 1] > 0) | (ci95[, 2] < 0)
+
+    scaled_summary$Star <- star
+
     # back-transform slopes to original encoded predictor units
-    s_x <- apply(as.matrix(X_orig), 2, stats::sd); s_x[!is.finite(s_x) | s_x == 0] <- 1
+    X_orig_m <- as.matrix(X_orig)
+    s_x <- apply(X_orig_m, 2, stats::sd)
+    s_x[!is.finite(s_x) | s_x == 0] <- 1
+
     samp_scaled <- post[, -1, drop = FALSE]
     A_samp <- sweep(samp_scaled, 2, s_x, "/")
+
     logit_sd <- pi / sqrt(3)
     SAS_samp  <- A_samp * logit_sd
     Long_samp <- A_samp * (logit_sd + 1)
-    summarise_mat <- function(M) { ci <- qfun(M); data.frame(Mean = colMeans(M), CI_low = ci[,1], CI_high = ci[,2]) }
+
+    summarise_mat <- function(M) {
+      ci <- qfun_mat(M, ci_level)
+      data.frame(Mean = colMeans(M), CI_low = ci[, 1], CI_high = ci[, 2])
+    }
+
     out_scaled <- summarise_mat(samp_scaled)
     out_A      <- summarise_mat(A_samp)
     out_SAS    <- summarise_mat(SAS_samp)
     out_Long   <- summarise_mat(Long_samp)
+
     std_back <- data.frame(
       Predictor       = colnames(X_orig),
       Scaled          = out_scaled$Mean,
@@ -427,139 +422,455 @@ MEP_latent <- function(
       b_Long_original = out_Long$Mean,
       b_Long_CI_low   = out_Long$CI_low,
       b_Long_CI_high  = out_Long$CI_high,
-      row.names = NULL, check.names = FALSE
+      row.names = NULL,
+      check.names = FALSE
     )
 
     # posterior predictive check
-    n_rep <- nrow(post); n_obs <- nrow(Xw)
+    n_rep <- nrow(post)
+    n_obs <- nrow(Xw)
     y_rep <- matrix(0L, nrow = n_rep, ncol = n_obs)
     for (i in seq_len(n_rep)) {
       pr_i <- stats::plogis(Xw %*% post[i, ])
-      y_rep[i, ] <- rbinom(n_obs, 1, pr_i)
+      y_rep[i, ] <- stats::rbinom(n_obs, 1, pr_i)
     }
     p_match <- colMeans(sweep(y_rep, 2, y, `==`))
-    prop_matched <- mean(p_match >= ppc_threshold)
+    prop_matched <- mean(p_match >= ppc_threshold, na.rm = TRUE)
+    if (!is.finite(prop_matched)) prop_matched <- 0
 
     list(
-      posterior_chain = post,
       posterior_means = pm,
-      se_estimates    = se,
-      acceptance_rate = acc,
-      prop_matched    = prop_matched,
-      scaled_summary  = scaled_summary,
+      scaled_summary = scaled_summary,
       standardized_coefs_back = std_back,
-      scaling_info = list(center = S$center, scale = S$scale),
-      ci_level = ci_level
+      prop_matched = prop_matched
     )
   }
 
-  # GLM reference ratio on the same standardized scaling (same rows)
-  S_ref  <- safe_scale(X_mat)
-  X_ref  <- S_ref$Xstd
+
+  compute_convergence <- function(post, ess_threshold, geweke_z_threshold) {
+    out <- list(
+      ess = rep(NA_real_, ncol(post)),
+      geweke_z = rep(NA_real_, ncol(post)),
+      ess_min = NA_real_,
+      geweke_max_abs = NA_real_,
+      converged = NA
+    )
+    if (requireNamespace("coda", quietly = TRUE)) {
+      m <- coda::mcmc(post)
+      ess <- as.numeric(coda::effectiveSize(m))
+      gz  <- as.numeric(coda::geweke.diag(m)$z)
+
+      out$ess <- ess
+      out$geweke_z <- gz
+      out$ess_min <- suppressWarnings(min(ess, na.rm = TRUE))
+      out$geweke_max_abs <- suppressWarnings(max(abs(gz), na.rm = TRUE))
+
+      ess_ok <- is.finite(out$ess_min) && out$ess_min >= ess_threshold
+      gz_ok  <- is.finite(out$geweke_max_abs) && out$geweke_max_abs <= geweke_z_threshold
+      out$converged <- isTRUE(ess_ok && gz_ok)
+    }
+    out
+  }
+
+  # normalize y -> {0,1}
+  y_full <- y
+  if (!is.numeric(y_full)) {
+    if (is.logical(y_full)) y_full <- as.integer(y_full)
+    else if (is.factor(y_full) || is.character(y_full)) y_full <- as.integer(factor(y_full)) - 1L
+    else stop("`y` must be numeric 0/1, logical, or 2-level factor/character.", call. = FALSE)
+  }
+  y_full <- as.numeric(y_full)
+
+  X_raw <- as.data.frame(X, stringsAsFactors = FALSE)
+  if (nrow(X_raw) != length(y_full)) stop("Rows of X must match length of y.", call. = FALSE)
+  if (ncol(X_raw) < 1L) stop("X must have at least one predictor.", call. = FALSE)
+
+  # shared missing handling on raw (before encoding)
+  if (missing == "complete") {
+    keep_idx <- which(stats::complete.cases(data.frame(y = y_full, X_raw, check.names = FALSE)))
+    if (!length(keep_idx)) stop("No complete rows for y and X.", call. = FALSE)
+    y_used <- y_full[keep_idx]
+    X_used <- X_raw[keep_idx, , drop = FALSE]
+  } else {
+    keep_idx <- which(!is.na(y_full))
+    if (!length(keep_idx)) stop("No rows with observed y.", call. = FALSE)
+    y_used <- y_full[keep_idx]
+    X_used <- X_raw[keep_idx, , drop = FALSE]
+
+    num_method <- impute_args$numeric_method %||% "median"
+    fac_method <- impute_args$factor_method  %||% "mode"
+
+    for (j in seq_len(ncol(X_used))) {
+      v <- X_used[[j]]
+      if (is.numeric(v)) {
+        X_used[[j]] <- impute_numeric(v, method = num_method)
+      } else if (is.factor(v) || is.character(v) || is.logical(v)) {
+        if (!identical(tolower(fac_method), "mode")) {
+          warning("Only factor_method = 'mode' is supported here; using mode.")
+        }
+        X_used[[j]] <- impute_factor_mode(v)
+      } else {
+        v2 <- suppressWarnings(as.numeric(v))
+        X_used[[j]] <- impute_numeric(v2, method = num_method)
+      }
+    }
+  }
+
+  if (length(y_used) < 2L || length(unique(y_used)) < 2L) {
+    stop("Outcome must contain both 0 and 1 after missing handling.", call. = FALSE)
+  }
+
+  # encode factors, drop intercept
+  mm <- stats::model.matrix(~ ., data = X_used)
+  X_enc <- mm[, -1, drop = FALSE]
+  X_mat <- as.matrix(X_enc)
+  p_enc <- ncol(X_mat)
+  p_all <- 1L + p_enc
+
+  # GLM ratio reference on standardized encoded design (same rows)
+  S_ref <- safe_scale(X_mat)
+  X_ref <- S_ref$Xstd
   df_ref <- data.frame(y = y_used, X_ref)
   glm_fit <- try(suppressWarnings(stats::glm(y ~ ., data = df_ref, family = stats::binomial())), silent = TRUE)
-  glm_coefs <- if (!inherits(glm_fit, "try-error")) stats::coef(glm_fit) else NA_real_
+  glm_ok <- !(inherits(glm_fit, "try-error"))
+  glm_coefs <- if (glm_ok) stats::coef(glm_fit) else rep(NA_real_, p_all)
+
+  parse_ratio <- function(x) {
+    if (is.null(x) || is.na(x) || !nzchar(x)) return(NA_real_)
+    as.numeric(strsplit(x, ",\\s*")[[1]])
+  }
+
   Ref_ratio <- if (length(glm_coefs) >= 3 && is.finite(glm_coefs[2]) && abs(glm_coefs[2]) > 0) {
     paste(round(glm_coefs[-c(1, 2)] / glm_coefs[2], 3), collapse = ", ")
-  } else NA
+  } else {
+    NA_character_
+  }
   ref_ratio_vec <- parse_ratio(Ref_ratio)
 
-  # build grid: Sigma from (sigma0_intercept, sigma_global_multipliers)
-  mu_grid <- lapply(mu_vals, function(m) rep(m, p))
-  build_sigma <- function(gm) diag(c(sigma0_intercept, rep(gm, p - 1L)), nrow = p, ncol = p)
+  # build grids
+  mu_grid <- lapply(mu_vals, function(m) rep(m, p_all))
+  build_sigma <- function(gm) diag(c(sigma0_intercept, rep(gm, p_all - 1L)), nrow = p_all, ncol = p_all)
   Sigma_list <- lapply(sigma_global_multipliers, build_sigma)
+  kappa_grid <- kappa_vals
 
+  # sampler for a single chain at one grid point
+  run_chain_one <- function(n_iter, burn_in, init_beta, step_size,
+                            X_orig, y, mu, Sigma, kappa,
+                            ci_level, ppc_threshold,
+                            tune_threshold_hi, tune_threshold_lo, tune_interval,
+                            verbose, chain_seed = NULL) {
+
+    if (!is.null(chain_seed)) set.seed(as.integer(chain_seed))
+
+    S <- safe_scale(X_orig)
+    X_work <- S$Xstd
+    Xw <- cbind(Intercept = 1, X_work)
+    colnames(Xw) <- c("Intercept", colnames(X_orig))
+
+    cholSigma <- try(chol(Sigma), silent = TRUE)
+    if (inherits(cholSigma, "try-error")) stop("Sigma is not positive-definite.", call. = FALSE)
+
+    qform <- function(v) {
+      z <- backsolve(cholSigma, v, transpose = TRUE)
+      sum(z * z)
+    }
+
+    # init vector
+    if (length(init_beta) == 1L) init_vec <- rep(as.numeric(init_beta), p_all)
+    else if (length(init_beta) == p_all) init_vec <- as.numeric(init_beta)
+    else stop("`init_beta` must be a scalar or a numeric vector of length (1 + p_enc).", call. = FALSE)
+
+    log_post <- function(beta) {
+      eta <- as.vector(Xw %*% beta)
+      ll  <- sum(-y * log1pexp(-eta) - (1 - y) * log1pexp(eta))
+      diff <- beta - mu
+      ll - 0.5 * (qform(diff)^kappa)
+    }
+
+    chain <- matrix(0, nrow = n_iter, ncol = p_all)
+    colnames(chain) <- colnames(Xw)
+    chain[1, ] <- init_vec
+    cur_lp <- log_post(chain[1, ])
+    accept <- 0L
+    ss <- step_size
+
+    if (isTRUE(verbose)) {
+      message("RW-MH: ", n_iter, " iters; burn-in ", burn_in)
+    }
+
+    for (it in 2:n_iter) {
+      prop <- chain[it - 1, ] + ss * rnorm(p_all)
+      prop_lp <- log_post(prop)
+
+      if (log(runif(1)) < (prop_lp - cur_lp)) {
+        chain[it, ] <- prop
+        cur_lp <- prop_lp
+        accept <- accept + 1L
+      } else {
+        chain[it, ] <- chain[it - 1, ]
+      }
+
+      if (it <= burn_in && (it %% tune_interval) == 0) {
+        ar <- accept / it
+        if (ar > tune_threshold_hi) ss <- ss * 1.10
+        if (ar < tune_threshold_lo) ss <- ss * 0.90
+      }
+    }
+
+    post <- chain[(burn_in + 1):n_iter, , drop = FALSE]
+    list(
+      post = post,
+      acceptance_rate = accept / (n_iter - 1),
+      scaling_info = list(center = S$center, scale = S$scale),
+      Xw = Xw
+    )
+  }
+
+  # grid search (single chain per grid point)
   results_df <- data.frame(
-    mu = character(), sigma_diag = character(), kappa = numeric(),
-    acceptance_rate = numeric(), posterior_means = character(),
-    prop_matched = numeric(), posterior_ratio_scaled = character(),
+    grid_id = integer(),
+    mu = character(),
+    sigma_diag = character(),
+    kappa = numeric(),
+    acceptance_rate = numeric(),
+    prop_matched = numeric(),
+    posterior_ratio_scaled = character(),
     stringsAsFactors = FALSE
   )
-  grid_results_list <- list(); grid_idx <- 1L
+  runs <- list()
+  gid <- 1L
 
   for (mu in mu_grid) {
     mu_str <- paste(round(mu, 6), collapse = ", ")
     for (Sigma in Sigma_list) {
       sigma_diag_str <- paste(round(diag(Sigma), 6), collapse = ", ")
-      for (kappa in kappa_vals) {
-        run <- run_mep(
-          n_iter, step_size, X_mat, y_used, mu, Sigma, kappa,
-          burn_in, ci_level, ppc_threshold,
-          tune_threshold_hi, tune_threshold_lo, tune_interval,
-          verbose
+      for (kappa in kappa_grid) {
+
+        grid_chain_seed <- if (!is.null(seed)) as.integer(seed) + gid else NULL
+
+        ch <- run_chain_one(
+          n_iter = n_iter,
+          burn_in = burn_in,
+          init_beta = init_beta,
+          step_size = step_size,
+          X_orig = X_mat,
+          y = y_used,
+          mu = mu,
+          Sigma = Sigma,
+          kappa = kappa,
+          ci_level = ci_level,
+          ppc_threshold = ppc_threshold,
+          tune_threshold_hi = tune_threshold_hi,
+          tune_threshold_lo = tune_threshold_lo,
+          tune_interval = tune_interval,
+          verbose = verbose,
+          chain_seed = grid_chain_seed
         )
-        pm_str <- paste(round(run$posterior_means, 5), collapse = ", ")
-        vals   <- run$posterior_means
+
+        sum_one <- summarize_post(
+          post = ch$post,
+          X_orig = X_mat,
+          ci_level = ci_level,
+          ppc_threshold = ppc_threshold,
+          y = y_used,
+          Xw = ch$Xw
+        )
+
+        vals <- sum_one$posterior_means
         ratio_str <- if (length(vals) >= 3 && is.finite(vals[2]) && abs(vals[2]) > 0) {
           paste(round(vals[-c(1, 2)] / vals[2], 3), collapse = ", ")
-        } else NA
+        } else {
+          NA_character_
+        }
 
         results_df <- rbind(
           results_df,
           data.frame(
-            mu = mu_str, sigma_diag = sigma_diag_str, kappa = kappa,
-            acceptance_rate = run$acceptance_rate,
-            posterior_means = pm_str,
-            prop_matched = run$prop_matched,
+            grid_id = gid,
+            mu = mu_str,
+            sigma_diag = sigma_diag_str,
+            kappa = kappa,
+            acceptance_rate = ch$acceptance_rate,
+            prop_matched = sum_one$prop_matched,
             posterior_ratio_scaled = ratio_str,
             stringsAsFactors = FALSE
           )
         )
 
-        grid_results_list[[grid_idx]] <- list(
-          mu = mu_str, sigma_diag = sigma_diag_str, kappa = kappa,
-          acceptance_rate = run$acceptance_rate,
-          posterior_means = run$posterior_means,
-          prop_matched = run$prop_matched,
-          standardized_coefs_back = run$standardized_coefs_back,
-          scaled_summary = run$scaled_summary
+        runs[[gid]] <- list(
+          grid_id = gid,
+          mu = mu,
+          mu_str = mu_str,
+          Sigma = Sigma,
+          sigma_diag_str = sigma_diag_str,
+          kappa = kappa,
+          acceptance_rate = ch$acceptance_rate,
+          prop_matched = sum_one$prop_matched,
+          posterior_means = sum_one$posterior_means,
+          posterior_ratio_scaled = ratio_str
         )
-        grid_idx <- grid_idx + 1L
+
+        gid <- gid + 1L
       }
     }
   }
 
   # selection
-  lo <- accept_window[1]; hi <- accept_window[2]
-  cand <- results_df[is.finite(results_df$acceptance_rate) &
-                       results_df$acceptance_rate >= lo &
-                       results_df$acceptance_rate <= hi, , drop = FALSE]
+  lo <- accept_window[1]
+  hi <- accept_window[2]
+  cand <- results_df[
+    is.finite(results_df$acceptance_rate) &
+      results_df$acceptance_rate >= lo &
+      results_df$acceptance_rate <= hi,
+    , drop = FALSE
+  ]
+
   if (nrow(cand) == 0) {
     idx <- which.min(abs(results_df$acceptance_rate - accept_target))
     cand <- results_df[idx, , drop = FALSE]
   }
-  cand$Ratio_mean_difference <- sapply(cand$posterior_ratio_scaled, function(r) {
-    post_vec <- parse_ratio(r)
-    d <- suppressWarnings(mean(abs(post_vec - ref_ratio_vec), na.rm = TRUE))
-    if (!is.finite(d)) Inf else d
-  })
-  if (any(is.finite(cand$prop_matched)) && min(cand$prop_matched, na.rm = TRUE) < 0.90) {
-    best_row <- cand[order(-cand$prop_matched, cand$Ratio_mean_difference), ][1, , drop = FALSE]
-  } else {
-    best_row <- cand[order(cand$Ratio_mean_difference), ][1, , drop = FALSE]
+
+  cand$ratio_term <- NA_real_
+  if (!all(is.na(ref_ratio_vec))) {
+    cand$ratio_term <- vapply(cand$posterior_ratio_scaled, function(r) {
+      pv <- parse_ratio(r)
+      if (all(is.na(pv))) return(NA_real_)
+      if (length(pv) != length(ref_ratio_vec)) return(NA_real_)
+      mean(abs(pv - ref_ratio_vec))
+    }, numeric(1))
   }
 
-  best <- NULL
-  for (elem in grid_results_list) {
-    if (identical(elem$mu, best_row$mu) &&
-        identical(elem$sigma_diag, best_row$sigma_diag) &&
-        identical(elem$kappa, best_row$kappa)) {
-      best <- elem; break
-    }
+  # score: prefer lower ratio_term if defined, else prefer higher prop_matched
+  if (any(is.finite(cand$ratio_term))) {
+    cand <- cand[order(cand$ratio_term, -cand$prop_matched), , drop = FALSE]
+  } else {
+    cand <- cand[order(-cand$prop_matched), , drop = FALSE]
   }
-  if (is.null(best)) stop("Best run not found (MEP_latent).")
+
+  best_id <- cand$grid_id[1]
+  best_run <- runs[[best_id]]
+  mu_best <- best_run$mu
+  Sigma_best <- best_run$Sigma
+  kappa_best <- best_run$kappa
+
+  # rerun best with multiple chains
+  best_chains <- vector("list", n_chains_best)
+  for (ch_i in seq_len(n_chains_best)) {
+    ch <- run_chain_one(
+      n_iter = n_iter,
+      burn_in = burn_in,
+      init_beta = init_beta,
+      step_size = step_size,
+      X_orig = X_mat,
+      y = y_used,
+      mu = mu_best,
+      Sigma = Sigma_best,
+      kappa = kappa_best,
+      ci_level = ci_level,
+      ppc_threshold = ppc_threshold,
+      tune_threshold_hi = tune_threshold_hi,
+      tune_threshold_lo = tune_threshold_lo,
+      tune_interval = tune_interval,
+      verbose = verbose,
+      chain_seed = chain_seeds_best[ch_i]
+    )
+
+    sum_one <- summarize_post(
+      post = ch$post,
+      X_orig = X_mat,
+      ci_level = ci_level,
+      ppc_threshold = ppc_threshold,
+      y = y_used,
+      Xw = ch$Xw
+    )
+
+    best_chains[[ch_i]] <- list(
+      post = ch$post,
+      acceptance_rate = ch$acceptance_rate,
+      prop_matched = sum_one$prop_matched
+    )
+  }
+
+  best_acceptance <- mean(vapply(best_chains, function(x) x$acceptance_rate, numeric(1)), na.rm = TRUE)
+  best_prop_matched <- mean(vapply(best_chains, function(x) x$prop_matched, numeric(1)), na.rm = TRUE)
+
+  # multi-chain diagnostics (Rhat and multi-chain ESS)
+  diagnostics_multi <- list(
+    rhat = rep(NA_real_, ncol(best_chains[[1]]$post)),
+    rhat_max = NA_real_,
+    ess = rep(NA_real_, ncol(best_chains[[1]]$post)),
+    ess_min = NA_real_
+  )
+  if (requireNamespace("coda", quietly = TRUE) && n_chains_best >= 2) {
+    mlist <- coda::mcmc.list(lapply(best_chains, function(x) coda::mcmc(x$post)))
+    gd <- coda::gelman.diag(mlist, autoburnin = FALSE, multivariate = FALSE)$psrf
+    diagnostics_multi$rhat <- as.numeric(gd[, "Point est."])
+    diagnostics_multi$rhat_max <- suppressWarnings(max(diagnostics_multi$rhat, na.rm = TRUE))
+    ess_m <- coda::effectiveSize(mlist)
+    diagnostics_multi$ess <- as.numeric(ess_m)
+    diagnostics_multi$ess_min <- suppressWarnings(min(diagnostics_multi$ess, na.rm = TRUE))
+  }
+
+  # combine chains for final summaries
+  if (combine_chains == "stack") {
+    post_all <- do.call(rbind, lapply(best_chains, `[[`, "post"))
+  } else {
+    post_all <- best_chains[[1]]$post
+  }
+
+  # Rebuild Xw for summaries
+  S_final <- safe_scale(X_mat)
+  X_work_final <- S_final$Xstd
+  Xw_final <- cbind(Intercept = 1, X_work_final)
+  colnames(Xw_final) <- c("Intercept", colnames(X_mat))
+
+  sum_final <- summarize_post(
+    post = post_all,
+    X_orig = X_mat,
+    ci_level = ci_level,
+    ppc_threshold = ppc_threshold,
+    y = y_used,
+    Xw = Xw_final
+  )
+
+  convergence <- compute_convergence(
+    post = post_all,
+    ess_threshold = ess_threshold,
+    geweke_z_threshold = geweke_z_threshold
+  )
+
+  draws_out <- NULL
+  if (isTRUE(return_draws)) {
+    if (n_chains_best == 1L) draws_out <- best_chains[[1]]$post
+    else draws_out <- lapply(best_chains, `[[`, "post")
+  }
 
   list(
-    best_settings = list(mu = best_row$mu, Sigma_diag = best_row$sigma_diag, kappa = best_row$kappa),
-    best_acceptance = best$acceptance_rate,
-    best_prop_matched = best$prop_matched,
-    posterior_means = best$posterior_means,
-    standardized_coefs_back = best$standardized_coefs_back,
-    scaled_summary = best$scaled_summary,
-#    Ref_ratio = Ref_ratio,
-#    results_table = results_df,
-    ci_level = ci_level,
+    best_settings = list(
+      mu = best_run$mu_str,
+      Sigma_diag = best_run$sigma_diag_str,
+      kappa = kappa_best
+    ),
+    best_acceptance = best_acceptance,
+    best_prop_matched = best_prop_matched,
+    posterior_means = sum_final$posterior_means,
+    standardized_coefs_back = sum_final$standardized_coefs_back,
+    scaled_summary = sum_final$scaled_summary,
+    convergence = convergence,
+    diagnostics_multi = diagnostics_multi,
     rows_used = keep_idx,
-    missing_info = list(policy = missing, imputed = identical(missing, "impute"))
+    missing_info = list(policy = missing, imputed = identical(missing, "impute")),
+    best = list(
+      grid_id = best_id,
+      acceptance_rate = best_acceptance,
+      prop_matched = best_prop_matched,
+      n_chains_best = n_chains_best,
+      chain_seeds_best = chain_seeds_best,
+      combine_chains = combine_chains,
+      converged = convergence$converged,
+      ess_min = convergence$ess_min,
+      geweke_max_abs = convergence$geweke_max_abs
+    ),
+    draws = draws_out
   )
 }
