@@ -396,7 +396,6 @@ fit_multi <- MEP_mixture(
 )
 fit_multi$diagnostics_multi
 fit_multi$posterior$effects
-
 ```
 
 **Notes**
