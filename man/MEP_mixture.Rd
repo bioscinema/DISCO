@@ -9,8 +9,8 @@ MEP_mixture(
   X,
   missing = c("complete", "impute"),
   impute_args = list(),
-  n_iter_grid = 10000,
-  burn_in_grid = 1000,
+  n_iter = 10000,
+  burn_in = 1000,
   init_beta = 0.01,
   step_size = 0.4,
   mu_intercept_offsets = seq(-1, 1, by = 0.2),
@@ -49,9 +49,9 @@ to both modeling and severity diagnostics (shared rows/values). Default \code{"c
 \code{numeric_method = "median"|"mean"} (default \code{"median"}),
 \code{factor_method = "mode"} (default \code{"mode"}).}
 
-\item{n_iter_grid}{Integer; MH iterations per grid point (including burn-in). Default \code{10000}.}
+\item{n_iter}{Integer; MH iterations per grid point (including burn-in). Default \code{10000}.}
 
-\item{burn_in_grid}{Integer; burn-in iterations per grid point. Default \code{1000}.}
+\item{burn_in}{Integer; burn-in iterations per grid point. Default \code{1000}.}
 
 \item{init_beta}{Initial value(s) for the MH chain. Default \code{0.01}.}
 
@@ -296,7 +296,7 @@ d3$separation_type; d1$separation_type; d2$separation_type
 ## 1) Standardized-only coefficients (includes CIs for Scaled slopes)
 fit_std <- MEP_mixture(
   y, X_toy,
-  n_iter_grid = 4000, burn_in_grid = 1000, seed = 42,
+  n_iter = 4000, burn_in = 1000, seed = 42,
   transform_back = "none", ci_level = 0.95
 )
 head(fit_std$posterior$effects)
@@ -305,7 +305,7 @@ head(fit_std$posterior$effects)
 ## 2) Back-transform to LOGIT (per-encoded-unit effect) with CIs
 fit_logit <- MEP_mixture(
   y, X_toy,
-  n_iter_grid = 4000, burn_in_grid = 1000, seed = 42,
+  n_iter = 4000, burn_in = 1000, seed = 42,
   transform_back = "logit"
 )
 subset(fit_logit$posterior$effects,
@@ -314,12 +314,12 @@ subset(fit_logit$posterior$effects,
 ## 3) Alternative effect scales with CIs (choose ONE per run)
 fit_sas <- MEP_mixture(
   y, X_toy,
-  n_iter_grid = 4000, burn_in_grid = 1000, seed = 42,
+  n_iter = 4000, burn_in = 1000, seed = 42,
   transform_back = "SAS"
 )
 fit_long <- MEP_mixture(
   y, X_toy,
-  n_iter_grid = 4000, burn_in_grid = 1000, seed = 42,
+  n_iter = 4000, burn_in = 1000, seed = 42,
   transform_back = "Long"
 )
 subset(fit_sas$posterior$effects,
@@ -332,7 +332,7 @@ X_toy2 <- X_toy
 X_toy2$X3 <- stats::relevel(X_toy2$X3, ref = "B")
 fit_base <- MEP_mixture(
   y, X_toy2,
-  n_iter_grid = 3000, burn_in_grid = 800, seed = 7,
+  n_iter = 3000, burn_in = 800, seed = 7,
   transform_back = "logit"
 )
 head(fit_base$posterior$effects)   # dummy appears as "X3A"
@@ -346,7 +346,7 @@ X_miss$X3[7]      <- NA      # factor NA
 fit_cc <- MEP_mixture(
   y, X_miss,
   missing = "complete",
-  n_iter_grid = 3000, burn_in_grid = 800, seed = 9, transform_back = "Long"
+  n_iter = 3000, burn_in = 800, seed = 9, transform_back = "Long"
 )
 head(fit_cc$posterior$effects)
 
@@ -356,7 +356,7 @@ fit_im <- MEP_mixture(
   y, X_miss,
   missing = "impute",
   impute_args = list(numeric_method = "median"),
-  n_iter_grid = 3000, burn_in_grid = 800, seed = 9, transform_back = "logit"
+  n_iter = 3000, burn_in = 800, seed = 9, transform_back = "logit"
 )
 head(fit_im$posterior$effects)
 
@@ -370,7 +370,7 @@ fit$best
 ## 7) Rerun the selected best grid point with multiple chains
 fit_multi <- MEP_mixture(
   y, X_toy,
-  n_iter_grid = 4000, burn_in_grid = 1000,
+  n_iter = 4000, burn_in = 1000,
   n_chains_best = 4,
   chain_seeds_best = c(101, 102, 103, 104),
   combine_chains = "stack",

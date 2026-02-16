@@ -57,8 +57,8 @@
 #'          `numeric_method = "median"|"mean"` (default `"median"`),
 #'          `factor_method = "mode"` (default `"mode"`).
 #'
-#' @param n_iter_grid Integer; MH iterations per grid point (including burn-in). Default `10000`.
-#' @param burn_in_grid Integer; burn-in iterations per grid point. Default `1000`.
+#' @param n_iter Integer; MH iterations per grid point (including burn-in). Default `10000`.
+#' @param burn_in Integer; burn-in iterations per grid point. Default `1000`.
 #' @param init_beta Initial value(s) for the MH chain. Default `0.01`.
 #' @param step_size Proposal standard deviation for RW–MH. Default `0.40`.
 #'
@@ -236,7 +236,7 @@
 #' ## 1) Standardized-only coefficients (includes CIs for Scaled slopes)
 #' fit_std <- MEP_mixture(
 #'   y, X_toy,
-#'   n_iter_grid = 4000, burn_in_grid = 1000, seed = 42,
+#'   n_iter = 4000, burn_in = 1000, seed = 42,
 #'   transform_back = "none", ci_level = 0.95
 #' )
 #' head(fit_std$posterior$effects)
@@ -245,7 +245,7 @@
 #' ## 2) Back-transform to LOGIT (per-encoded-unit effect) with CIs
 #' fit_logit <- MEP_mixture(
 #'   y, X_toy,
-#'   n_iter_grid = 4000, burn_in_grid = 1000, seed = 42,
+#'   n_iter = 4000, burn_in = 1000, seed = 42,
 #'   transform_back = "logit"
 #' )
 #' subset(fit_logit$posterior$effects,
@@ -254,12 +254,12 @@
 #' ## 3) Alternative effect scales with CIs (choose ONE per run)
 #' fit_sas <- MEP_mixture(
 #'   y, X_toy,
-#'   n_iter_grid = 4000, burn_in_grid = 1000, seed = 42,
+#'   n_iter = 4000, burn_in = 1000, seed = 42,
 #'   transform_back = "SAS"
 #' )
 #' fit_long <- MEP_mixture(
 #'   y, X_toy,
-#'   n_iter_grid = 4000, burn_in_grid = 1000, seed = 42,
+#'   n_iter = 4000, burn_in = 1000, seed = 42,
 #'   transform_back = "Long"
 #' )
 #' subset(fit_sas$posterior$effects,
@@ -272,7 +272,7 @@
 #' X_toy2$X3 <- stats::relevel(X_toy2$X3, ref = "B")
 #' fit_base <- MEP_mixture(
 #'   y, X_toy2,
-#'   n_iter_grid = 3000, burn_in_grid = 800, seed = 7,
+#'   n_iter = 3000, burn_in = 800, seed = 7,
 #'   transform_back = "logit"
 #' )
 #' head(fit_base$posterior$effects)   # dummy appears as "X3A"
@@ -286,7 +286,7 @@
 #' fit_cc <- MEP_mixture(
 #'   y, X_miss,
 #'   missing = "complete",
-#'   n_iter_grid = 3000, burn_in_grid = 800, seed = 9, transform_back = "Long"
+#'   n_iter = 3000, burn_in = 800, seed = 9, transform_back = "Long"
 #' )
 #' head(fit_cc$posterior$effects)
 #'
@@ -296,7 +296,7 @@
 #'   y, X_miss,
 #'   missing = "impute",
 #'   impute_args = list(numeric_method = "median"),
-#'   n_iter_grid = 3000, burn_in_grid = 800, seed = 9, transform_back = "logit"
+#'   n_iter = 3000, burn_in = 800, seed = 9, transform_back = "logit"
 #' )
 #' head(fit_im$posterior$effects)
 #'
@@ -310,7 +310,7 @@
 #' ## 7) Rerun the selected best grid point with multiple chains
 #' fit_multi <- MEP_mixture(
 #'   y, X_toy,
-#'   n_iter_grid = 4000, burn_in_grid = 1000,
+#'   n_iter = 4000, burn_in = 1000,
 #'   n_chains_best = 4,
 #'   chain_seeds_best = c(101, 102, 103, 104),
 #'   combine_chains = "stack",
@@ -324,8 +324,8 @@ MEP_mixture <- function(
     y, X,
     missing = c("complete","impute"),
     impute_args = list(),
-    n_iter_grid = 10000,
-    burn_in_grid = 1000,
+    n_iter = 10000,
+    burn_in = 1000,
     init_beta = 0.01,
     step_size = 0.40,
     mu_intercept_offsets = seq(-1, 1, by = 0.2),
@@ -717,7 +717,7 @@ MEP_mixture <- function(
         grid_chain_seed <- if (!is.null(seed)) as.integer(seed) + gid else NULL
 
         res <- run_MH_sampler(
-          n_iter = n_iter_grid,
+          n_iter = n_iter,
           init_beta = init_beta,
           step_size = step_size,
           X_enc = X_mm,
@@ -725,7 +725,7 @@ MEP_mixture <- function(
           mu = mu,
           Sigma = Sigma,
           kappa = kappa,
-          burn_in = burn_in_grid,
+          burn_in = burn_in,
           transform_back = transform_back,
           ci_level = ci_level,
           ess_threshold = ess_threshold,
@@ -854,7 +854,7 @@ MEP_mixture <- function(
   best_chains <- vector("list", n_chains_best)
   for (ch in seq_len(n_chains_best)) {
     best_chains[[ch]] <- run_MH_sampler(
-      n_iter = n_iter_grid,
+      n_iter = n_iter,
       init_beta = init_beta,
       step_size = step_size,
       X_enc = X_mm,
@@ -862,7 +862,7 @@ MEP_mixture <- function(
       mu = mu_best,
       Sigma = Sigma_best,
       kappa = kappa_best,
-      burn_in = burn_in_grid,
+      burn_in = burn_in,
       transform_back = transform_back,
       ci_level = ci_level,
       ess_threshold = ess_threshold,

@@ -2,7 +2,7 @@
 % Please edit documentation in R/Latent_separation.R
 \name{latent_separation}
 \alias{latent_separation}
-\title{LP-based latent separation detection (with optional minimal-subset search)}
+\title{LP-based latent separation detection (with optional subset search)}
 \usage{
 latent_separation(
   y,
@@ -20,7 +20,11 @@ latent_separation(
   scale_X = TRUE,
   tau_complete = 1e-06,
   eps_boundary = NULL,
-  quasi_to_none_if = 0.5
+  quasi_to_none_if = 0.5,
+  missing_scope = c("global", "subset"),
+  minimal_strategy = c("auto", "forward", "backward"),
+  small_p_threshold = 15L,
+  backward_exhaustive = FALSE
 )
 }
 \arguments{
@@ -32,20 +36,17 @@ latent_separation(
 
 \item{min_vars}{Minimum subset size to consider (default 2).}
 
-\item{epsilon}{Numeric scalar > 0. Legacy margin parameter; used as default
-for eps_boundary. Default 1e-5.}
+\item{epsilon}{Numeric scalar > 0. Legacy margin parameter; used as default for eps_boundary.}
 
 \item{only_perfect}{Legacy flag for exhaustive mode (kept for compatibility).}
 
-\item{find_minimal}{If TRUE, return inclusion-minimal separating subsets
-using pruning.}
+\item{find_minimal}{If TRUE, return separating subsets based on strategy.}
 
 \item{mode}{One of "either", "perfect", or "quasi".}
 
 \item{max_vars}{Optional upper bound on subset size (default all the way to p).}
 
-\item{stop_at_first}{If TRUE and find_minimal=TRUE, stop after the first
-minimal hit.}
+\item{stop_at_first}{If TRUE, stop after the first minimal hit (forward or backward_exhaustive).}
 
 \item{missing}{How to treat missing data: "complete" or "impute".}
 
@@ -53,81 +54,66 @@ minimal hit.}
 
 \item{scale_X}{Logical; if TRUE, standardize encoded predictors with scale().}
 
-\item{tau_complete}{Numeric scalar > 0. Threshold on max-margin delta_hat
-to declare complete separation. Default 1e-6 (after scaling).}
+\item{tau_complete}{Threshold on delta_hat to declare complete separation. Default 1e-6.}
 
-\item{eps_boundary}{Numeric scalar > 0. Target margin delta for severity LP.
-If NULL, defaults to epsilon.}
+\item{eps_boundary}{Target margin delta for severity LP. If NULL, defaults to epsilon.}
 
-\item{quasi_to_none_if}{Numeric in (0,1]. If K_relax >= rho * n, quasi is
-treated as none. Default 0.5.}
+\item{quasi_to_none_if}{Numeric in (0,1]. If K_relax >= rho * n, quasi treated as none.}
+
+\item{missing_scope}{"global" or "subset". Default "global".}
+
+\item{minimal_strategy}{"auto","forward","backward". Default "auto".}
+
+\item{small_p_threshold}{Threshold used by minimal_strategy="auto". Default 15.}
+
+\item{backward_exhaustive}{If TRUE and strategy is backward, enumerate by size. Default FALSE.}
 }
 \value{
 \itemize{
-\item Single-set mode: list with fields type, satisfied, available_types,
-removed, message, missing_info, diagnostics.
-\item Exhaustive mode: named list of hits with type, vars, removed, missing_info,
-diagnostics.
-\item Minimal-subset mode: list with $minimal_subsets, each entry containing
-type, vars, idx, removed, missing_info, diagnostics.
+\item Single-set mode: list with fields type, satisfied, available_types, removed, message,
+missing_info, diagnostics.
+\item Exhaustive mode: named list of hits with type, vars, removed, missing_info, diagnostics.
+\item Minimal mode: list with $minimal_subsets, each entry containing type, vars, idx, removed,
+missing_info, diagnostics plus strategy metadata.
 }
 }
 \description{
-This function detects latent (complete or quasi-complete) separation for a
-binary outcome using linear programming in the multivariate space.
-It uses a two-stage pipeline:
-(i) a max-margin LP with positive/negative split and an L1 equality
-normalization to identify complete separation; and (ii) a severity LP
-that computes a multivariate severity lower bound K_relax.
+Detects latent (complete or quasi-complete) separation for a binary outcome
+using linear programming in the multivariate space.
 }
 \details{
-Quasi is treated as non-substantive and labeled no separation when
-K_relax / n is large (by default >= quasi_to_none_if = 0.5) to reduce
-false positives.
+Two-stage pipeline:
+Stage A: max-margin LP with L1 equality normalization to identify complete separation
+Stage B: severity LP to compute multivariate severity lower bound K_relax
 
-The function provides:
+Notes:
 \itemize{
-\item Single-set check (default).
-\item Exhaustive subset testing (test_combinations = TRUE).
-\item Minimal-subset search with pruning (find_minimal = TRUE).
+\item Quasi is treated as non-substantive and labeled no separation when
+K_relax / n is large (default quasi_to_none_if = 0.5) to reduce false positives.
+\item Legacy row-deletion diagnostic for quasi is kept (removed indices), but does not
+drive the quasi decision.
 }
 
-It also preserves the legacy row-deletion diagnostic for quasi (indices of
-observations whose removal yields perfect separation), reported in removed.
-This diagnostic does not drive the quasi decision.
-\subsection{Progress and runtime control for minimal-subset search}{
+Missingness handling across subsets:
+\itemize{
+\item missing_scope = "global" (recommended): missing handling is done once on full X,
+then reused for every subset so rows are fixed across subset evaluations.
+\item missing_scope = "subset": missing handling is done per subset (legacy behavior).
+}
 
-Minimal-subset search can be expensive because the number of candidate
-subsets grows combinatorially with p. You can control and monitor it using:
+Minimal subset search strategies:
+\itemize{
+\item minimal_strategy = "forward": enumerate increasing subset sizes (can be expensive)
+\item minimal_strategy = "backward": scalable greedy backward elimination by default
+\item minimal_strategy = "auto": forward if p <= small_p_threshold else backward
+\item backward_exhaustive = TRUE: enumerate subsets by decreasing size p-1, p-2, ...
+respecting eval_limit, can be expensive for moderate/large p.
+}
+
+Runtime controls for minimal search:
 \itemize{
 \item options(latent_separation.eval_limit = N)
-Maximum number of subset evaluations in minimal search. If exceeded, the
-search stops early and returns whatever has been found so far.
 \item options(latent_separation.show_progress = TRUE/FALSE)
-If TRUE, prints periodic progress updates during minimal search. If the
-'progress' package is available, a progress bar is used. Otherwise, it
-falls back to message() output.
 \item options(latent_separation.progress_every = M)
-Print or tick progress every M evaluated subsets (default 200).
-}
-
-Examples:
-options(latent_separation.show_progress = TRUE)
-options(latent_separation.eval_limit = 50000)
-options(latent_separation.progress_every = 200)
 }
 }
-\section{Method (outline)}{
-
-Stage A (max-margin LP): maximize delta subject to
-y_i(beta0 + x_i^T beta) - delta >= 0 with beta = s^+ - s^-,
-s^+, s^- >= 0, and ||beta||_1 = 1^T(s^+ + s^-) = 1.
-If delta_hat > tau_complete, declare complete separation.
-
-Stage B (delta=0 feasibility): check feasibility with delta=0 under the same
-normalization. If feasible, compute multivariate severity:
-K_relax = ceil(sum_i t_i^* / delta) from the LP
-min sum_i t_i subject to y_i(beta0 + x_i^T beta) + t_i >= delta, t_i >= 0,
-||beta||_1 = 1. If K_relax >= rho n, treat quasi as none.
-}
-

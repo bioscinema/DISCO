@@ -18,10 +18,11 @@ When predictors **perfectly** (or quasi-completely) split the outcome, logistic 
   - a **vectorized Rand index**,
   - a **non-negative boundary threshold** to guard against boundary ties,
   - a **continuous severity score** in [0,1].
-- `latent_separation()` — multivariate detector using **LP-based** feasibility with options to:
-  - search for **inclusion-minimal** separating subsets (pruning),
-  - choose **perfect**, **quasi**, or **either** as “hit” criteria,
-  - handle missingness **per subset** (complete-case or imputation).
+- `latent_separation()` multivariate detector using LP-based feasibility with options to:
+  - search for separating subsets,
+  - choose **perfect**, **quasi**, or **either** as hit criteria,
+  - handle missingness either **once globally** (recommended for subset search) or **per subset**,
+  - choose subset-search strategy: forward enumeration or backward.
 
 ### Estimation (Bayesian)
 - `EP_univariable()` — DISCO-severity-adaptive **univariate** logistic regression with an **MEP** prior; shared missing handling (applied once), standardized X for **severity & fit**, optional back-transforms (logit / SAS / Long), and a GLM comparator on standardized X.
@@ -42,91 +43,14 @@ library(DISCO)
 
 ## Separation Diagnosis
 
-### Quick Start
-
-```r
-library(DISCO)
-
-#### I. Univariate: quick diagnostic #############
-df <- data.frame(Y = c(0,1,0,1), X = c(-2, 2, -1, 1))
-res <- uni_separation(df, predictor = "X", outcome = "Y", missing = "complete")
-res$separation_type     # "Perfect separation" | "Quasi-complete separation" | "No separation problem"
-res$severity_score      # in [0,1]
-res$boundary_threshold  # data-driven non-negative threshold
-res$missing_info        # method, params, rows_used, n_used
-
-#### II. Latent (multivariate): LP-based check ####
-y <- c(0,0,0,0,1,1,1,1)
-X <- cbind(
-  X1 = c(-1.86, -0.81, 1.32, -0.40, 0.91, 2.49, 0.34, 0.25),
-  X2 = c( 0.52,  1.07, 0.60,  0.67,-1.39, 0.16,-1.40,-0.09)
-)
-lat <- latent_separation(y, X, missing = "complete")
-lat$type           # "Perfect separation" | "Quasi-complete separation" | "No separation problem"
-lat$message        # human-readable summary
-lat$removed        # for quasi: variables whose removal yields perfect (else NULL)
-lat$missing_info   # method, params, rows_used, n_used
-
-# Search for inclusion-minimal separating subsets (pruned search)
-# Optional: progress and runtime cap for minimal-subset search
-options(latent_separation.show_progress = TRUE) # enables progress reporting during the minimal subset search.
-options(latent_separation.progress_every = 200) # if a progress bar is not available, prints a message every 200 evaluated subsets.
-options(latent_separation.eval_limit = 10000000) # caps the total number of evaluated subsets to avoid running indefinitely.
-
-lat_min <- latent_separation(
-  y, X,
-  find_minimal   = TRUE,
-  min_vars       = 2,              # smallest subset size to consider
-  max_vars       = ncol(X)        # largest subset size (default is all)
-)
-names(lat_min$minimal_subsets)     # e.g., "X1", "X2", "X1_X2"
-one <- lat_min$minimal_subsets[[1]]
-one$type          # "Perfect separation" or "Quasi-complete separation"
-one$vars          # variables in the subset
-one$removed       # for quasi-only; variables whose removal yields perfect
-one$missing_info  # rows used, etc.
-
-```
-
-### Missing-Data Handling
-
-- `missing = "complete"`: drop rows with **NA** in the tested variables; the **outcome is never imputed**.
-- `missing = "impute"`: **impute predictors only**; outcome NAs are **always dropped**.
-- Every result returns `missing_info` with: `method`, `params`, `n_used`, and the exact `rows_used` (original indices).
-- In latent (subset) searches, **each subset** has its own `missing_info` since missingness can differ by variable combination.
-
-#### Imputation Params (`missing_info$params`)
-A compact summary of per-type rules when `method = "impute"` (e.g., `Numeric=Mean; Categorical=Missing; Logical=Mode`):
-
-- **Numeric** (`numeric_method`)
-  - `Mean` — replace `NA` with the column mean  
-  - `Median` — replace `NA` with the column median  
-  - `Constant=<c>` — replace `NA` with a supplied constant (e.g., `Constant=0`)  
-  - `Custom Imputer` — a user-provided function was used
-
-- **Categorical** (`categorical_method`)
-  - `Missing` — turn `NA` into an explicit `"Missing"` level (adds a level if needed)  
-  - `Mode` — replace `NA` with the most frequent level  
-  - `Constant=<level>` — replace `NA` with a supplied level  
-  - `Custom Imputer` — a user-provided function was used
-
-- **Logical** (`logical_method`)
-  - `Mode` — replace `NA` with the most frequent value (`TRUE`/`FALSE`)  
-  - `Constant=TRUE/FALSE` — replace `NA` with the given logical  
-  - `Custom Imputer` — a user-provided function was used
-
-**Mode definition.** *Mode* is the value/level occurring **most often** among non-missing entries. If there’s a tie, it is broken **deterministically** (e.g., first level / first in `table()` order).
-
-Example with missing values:
-
 ```r
 set.seed(2025)
 df_miss <- data.frame(
-  Y    = c(0,0,0,0,1,1,1,1, 0,1, NA, 1),
-  X1   = c(0.5, 1.0, NA, 2.0, 5.0, 6.0, 7.0, NA, 1.5, 8.0, 9.0, 6.5),
-  X2   = c(10, 9, 8, NA, 6, 5, NA, 3, 2, 1, 0, NA),
-  Race = factor(c("A","A","B", NA, "C","C","B","A","B", NA, "C","A")),
-  L1   = c(TRUE, NA, FALSE, TRUE, TRUE, NA, FALSE, TRUE, FALSE, TRUE, TRUE, NA)
+  Y    = c(0,0,0,0,0,1,1,1,1, 0,1, NA, 1),
+  X1   = c(6.1,0.5, 1.0, NA, 2.0, 5.0, 6.0, 7.0, NA, 1.5, 8.0, 9.0, 6.5),
+  X2   = c(4,10, 9, 8, NA, 6, 5, NA, 3, 2, 1, 0, NA),
+  Race = factor(c("C","A","A","B", NA, "C","C","B","A","B", NA, "C","A")),
+  L1   = c(TRUE,TRUE, NA, FALSE, TRUE, TRUE, NA, FALSE, TRUE, FALSE, TRUE, TRUE, NA)
 )
 
 # Complete-case
@@ -145,7 +69,7 @@ res_cat <- uni_separation(
 res_cat
 ```
 
-### Pretty tables (`gt`) — optional
+### Univairate Separation
 
 ```r
 # install.packages("gt")
@@ -159,41 +83,45 @@ gt_uni_separation(res_uni_cc, title = "Univariate (X1 vs Y) — Complete-case")
 gt_uni_separation_all(df_miss, outcome = "Y", missing = "complete")
 ```
 
-#### Example output
-
 ![Univariate DISCO table](man/figures/readme-uni-gt-all.png)
 
 > This table summarizes univariate screen results of each predictor against the outcome (`Y`) using **complete-case** data. It flags whether any single predictor causes separation in a logistic model. See the README earlier version for column definitions: Separation Index, Severity, Boundary Threshold, Single-Tie Boundary, Tie Count, Missing-Data Handling block, Separation label, and Rows Used (Original Indices).
 
+### Latent Separation
+#### Forward Diagnosis, recommend for small p
 ```r
-# Latent minimal subsets (complete)
 res_lat_com <- latent_separation(
   y = df_miss$Y,
   X = df_miss[, c("X1","X2","Race","L1")],
   find_minimal = TRUE,
-  missing = "complete"
+  missing = "complete",
+  missing_scope = "global", # sample size to be fixed across all subset tests
+  minimal_strategy = "forward"
 )
-gt_latent_separation(res_lat_com, title = "Latent Minimal Subsets — Complete-Case")
+gt_latent_separation(res_lat_com, title = "Latent Minimal Subsets - Forward")
 
 ```
-![Latent DISCO table](man/figures/readme-latent-gt-complete.png)
+![Latent DISCO table](man/figures/readme-latent-gt-forward.png)
 
-> Summarizes subsets of predictors that yield separation in a **complete-case analysis**. See the original table notes for interpretation of “Removed And Rest Reach Perfect”, “Rows Used (Original Indices)”, etc.
+#### Backward Diagnosis, recommend for large p
 
 ```r
-# Latent minimal subsets (imputed)
-res_lat_imp <- latent_separation(
+
+res_lat_com <- latent_separation(
   y = df_miss$Y,
   X = df_miss[, c("X1","X2","Race","L1")],
   find_minimal = TRUE,
-  missing = "impute",
-  impute_args = list(numeric_method = "mean", categorical_method = "missing", logical_method = "mode")
+  missing = "complete",
+  missing_scope = "global",
+  minimal_strategy = "backward",
+  backward_exhaustive = TRUE
 )
-gt_latent_separation(res_lat_imp, title = "Latent Minimal Subsets — Imputed")
+gt_latent_separation(res_lat_com, title = "Latent Minimal Subsets - Backward")
+
+
+
 ```
-
-![Latent DISCO table](man/figures/readme-latent-gt.png)
-
+![Latent DISCO table](man/figures/readme-latent-gt-backward.png)
 
 
 ---
@@ -416,7 +344,7 @@ X <- data.frame(
 ## Single Chain
 fit_single <- MEP_mixture(
   y, X,
-  n_iter_grid = 10000, burn_in_grid = 1000, init_beta = 0.01,
+  n_iter = 10000, burn_in = 1000, init_beta = 0.01,
   transform_back = "none",
   seed = 9
 )
@@ -427,7 +355,7 @@ fit_single$posterior$effects
 ## Multiple Chains
 fit_multi <- MEP_mixture(
   y, X,
-  n_iter_grid = 10000, burn_in_grid = 1000, init_beta = 0.01,
+  n_iter = 10000, burn_in = 1000, init_beta = 0.01,
   n_chains_best = 4,
   chain_seeds_best = c(101, 102, 103, 104),
   combine_chains = "stack",
@@ -468,8 +396,15 @@ latent_separation(
   mode = c("either","perfect","quasi"),
   stop_at_first = FALSE,
   missing = c("complete","impute"),
+  missing_scope = c("global","subset"),
   impute_args = list(...),
-  scale_X = FALSE     # set TRUE to z-score encoded predictors
+  minimal_strategy = c("auto","forward","backward"),
+  small_p_threshold = 15,
+  backward_exhaustive = FALSE,
+  scale_X = TRUE,
+  tau_complete = 1e-6,
+  eps_boundary = NULL,
+  quasi_to_none_if = 0.5
 )
 
 # Severity-adaptive Univariate Bayes
@@ -494,15 +429,7 @@ MEP_latent(
   y, X,
   missing = c("complete","impute"),
   impute_args = list(),
-  n_iter = 10000, burn_in = 1000, step_size = 0.4,
-  mu_vals = seq(-1, 1, by = 0.1),
-  sigma0_intercept = 10,
-  sigma_global_multipliers = c(0.1, 0.5, 1, 2, 5, 10),
-  kappa_vals = c(0.5, 1, 2),
-  accept_window = c(0.3, 0.4), accept_target = 0.35,
-  ci_level = 0.95, ppc_threshold = 0.80,
-  tune_threshold_hi = 0.45, tune_threshold_lo = 0.20, tune_interval = 500,
-  verbose = FALSE, seed = NULL
+  n_iter = 10000, burn_in = 1000
 )
 
 # Mixture Situation
@@ -510,17 +437,7 @@ MEP_mixture(
   y, X,
   missing = c("complete","impute"),
   impute_args = list(),
-  n_iter_grid = 10000, burn_in_grid = 1000,
-  step_size = 0.40,
-  mu_intercept_offsets = seq(-1, 1, by = 0.2),
-  sigma0_intercept = 10,
-  sigma_global_multipliers = c(0.1, 0.5, 1, 2, 5, 10),
-  sigma_hi = 5, sigma_lo = 0.15,
-  kappa_min = 1, kappa_max = 2.5,
-  kappa_delta = seq(-0.5, 0.5, by = 0.2),
-  accept_window = c(0.30, 0.40), accept_target = 0.35,
-  ref = NULL, transform_back = c("none","logit","SAS","Long"),
-  seed = NULL, return_draws = FALSE
+  n_iter = 10000, burn_in = 1000
 )
 ```
 
