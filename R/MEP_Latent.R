@@ -75,8 +75,14 @@
 #'   \code{diag(c(sigma0_intercept, rep(gm, p-1)))}. Default
 #'   \code{c(0.1, 0.5, 1, 2, 5, 10)}.
 #'
+#' @param kappa_mode How to set \eqn{\kappa}. \code{"auto"} uses \code{kappa_vals}
+#'   as a grid and selects \eqn{\kappa} during the grid search. \code{"fixed"}
+#'   skips the \eqn{\kappa} grid and uses \code{kappa_fixed} for all runs.
+#'   Default \code{"auto"}.
+#' @param kappa_fixed Single positive value used when \code{kappa_mode="fixed"}.
+#'   Default \code{1}.
 #' @param kappa_vals Numeric vector of positive \eqn{\kappa} values (EP shape)
-#'   to include in the grid. Default \code{c(0.5, 1, 2)}.
+#'   used only when \code{kappa_mode="auto"}. Default \code{c(0.5, 1, 2)}.
 #'
 #' @param accept_window Numeric length-2 vector giving the acceptable
 #'   MH acceptance-rate window. Default \code{c(0.30, 0.40)}.
@@ -114,7 +120,8 @@
 #' @return A list with:
 #' \itemize{
 #'   \item \code{best_settings}: list with chosen \code{mu} (as a string),
-#'         \code{Sigma_diag} (prior diagonal as a string), and \code{kappa}.
+#'         \code{Sigma_diag} (prior diagonal as a string), chosen \code{kappa},
+#'         and \code{kappa_mode}.
 #'   \item \code{best_acceptance}: MH acceptance rate of the selected run.
 #'   \item \code{best_prop_matched}: posterior predictive “match” statistic for the selected run.
 #'   \item \code{posterior_means}: posterior means (length \eqn{p}) for the selected run (working scale).
@@ -134,7 +141,11 @@
 #'   \item \code{convergence}: list with single-posterior diagnostics for the final combined draws:
 #'         \code{ess}, \code{geweke_z}, \code{ess_min}, \code{geweke_max_abs}, \code{converged}.
 #'   \item \code{best}: list including \code{n_chains_best}, \code{chain_seeds_best}, and \code{combine_chains}.
-
+#'   #'   \item \code{burnin_step_trace_best}: list of length \code{n_chains_best};
+#'         each element is a data.frame with columns \code{iter}, \code{acceptance},
+#'         \code{step_size}, recording burn-in tuning checkpoints for the best-point reruns.
+#'   \item \code{step_size_final_best}: numeric vector of length \code{n_chains_best}
+#'         giving the final tuned step size after burn-in for each best-point chain.
 #' }
 #'
 #' @details
@@ -172,6 +183,8 @@
 #' (or closest to \code{accept_target} if none). When a GLM ratio is available, we prefer
 #' small mean absolute deviation from that ratio; ties are broken by higher posterior
 #' predictive agreement.
+#' #' When \code{kappa_mode="fixed"}, \eqn{\kappa} is not part of the grid and the
+#' selection is over \eqn{(\mu,\Sigma)} only.
 #'
 #' \strong{Evidence flags (Sig and stars).}
 #' The returned \code{scaled_summary} includes \code{Sig}, which is \code{TRUE}
@@ -268,7 +281,11 @@ MEP_latent <- function(
     mu_vals = seq(-1, 1, by = 0.1),
     sigma0_intercept = 10,
     sigma_global_multipliers = c(0.1, 0.5, 1, 2, 5, 10),
+
+    kappa_mode = c("auto","fixed"),
     kappa_vals = c(0.5, 1, 2),
+    kappa_fixed = 1,
+
     accept_window = c(0.3, 0.4),
     accept_target = 0.35,
     ci_level = 0.95,
@@ -289,6 +306,7 @@ MEP_latent <- function(
 
   missing <- base::match.arg(as.character(missing), choices = c("complete","impute"))
   combine_chains <- base::match.arg(as.character(combine_chains), choices = c("stack","none"))
+  kappa_mode <- base::match.arg(as.character(kappa_mode), choices = c("auto","fixed"))
 
   if (!is.null(seed)) set.seed(as.integer(seed))
 
@@ -361,7 +379,6 @@ MEP_latent <- function(
       check.names = FALSE
     )
 
-    # stars based on nested credible intervals from posterior draws
     ci_mat_for_level <- function(M, lvl) {
       qlo <- (1 - lvl) / 2
       qhi <- 1 - qlo
@@ -377,16 +394,9 @@ MEP_latent <- function(
     star[(ci95[, 1] > 0) | (ci95[, 2] < 0)] <- "**"
     star[(ci99[, 1] > 0) | (ci99[, 2] < 0)] <- "***"
 
-    # decide what "Sig" should mean
-    # Option A: match the main CI level used in the table
     scaled_summary$Sig <- (scaled_summary$CI_low > 0) | (scaled_summary$CI_high < 0)
-
-    # Option B: always use 95% for Sig (then rename it)
-    # scaled_summary$Sig_95 <- (ci95[, 1] > 0) | (ci95[, 2] < 0)
-
     scaled_summary$Star <- star
 
-    # back-transform slopes to original encoded predictor units
     X_orig_m <- as.matrix(X_orig)
     s_x <- apply(X_orig_m, 2, stats::sd)
     s_x[!is.finite(s_x) | s_x == 0] <- 1
@@ -426,7 +436,6 @@ MEP_latent <- function(
       check.names = FALSE
     )
 
-    # posterior predictive check
     n_rep <- nrow(post)
     n_obs <- nrow(Xw)
     y_rep <- matrix(0L, nrow = n_rep, ncol = n_obs)
@@ -445,7 +454,6 @@ MEP_latent <- function(
       prop_matched = prop_matched
     )
   }
-
 
   compute_convergence <- function(post, ess_threshold, geweke_z_threshold) {
     out <- list(
@@ -551,7 +559,19 @@ MEP_latent <- function(
   mu_grid <- lapply(mu_vals, function(m) rep(m, p_all))
   build_sigma <- function(gm) diag(c(sigma0_intercept, rep(gm, p_all - 1L)), nrow = p_all, ncol = p_all)
   Sigma_list <- lapply(sigma_global_multipliers, build_sigma)
-  kappa_grid <- kappa_vals
+
+  # NEW: kappa grid logic
+  if (kappa_mode == "fixed") {
+    if (!is.numeric(kappa_fixed) || length(kappa_fixed) != 1L || !is.finite(kappa_fixed) || kappa_fixed <= 0) {
+      stop("When kappa_mode = 'fixed', `kappa_fixed` must be a single positive finite number.", call. = FALSE)
+    }
+    kappa_grid <- as.numeric(kappa_fixed)
+  } else {
+    if (!is.numeric(kappa_vals) || length(kappa_vals) < 1L || any(!is.finite(kappa_vals)) || any(kappa_vals <= 0)) {
+      stop("When kappa_mode = 'auto', `kappa_vals` must be a numeric vector of positive finite values.", call. = FALSE)
+    }
+    kappa_grid <- kappa_vals
+  }
 
   # sampler for a single chain at one grid point
   run_chain_one <- function(n_iter, burn_in, init_beta, step_size,
@@ -575,7 +595,6 @@ MEP_latent <- function(
       sum(z * z)
     }
 
-    # init vector
     if (length(init_beta) == 1L) init_vec <- rep(as.numeric(init_beta), p_all)
     else if (length(init_beta) == p_all) init_vec <- as.numeric(init_beta)
     else stop("`init_beta` must be a scalar or a numeric vector of length (1 + p_enc).", call. = FALSE)
@@ -593,6 +612,13 @@ MEP_latent <- function(
     cur_lp <- log_post(chain[1, ])
     accept <- 0L
     ss <- step_size
+
+    # record burn-in step sizes at each tuning check
+    tune_pts <- if (burn_in >= tune_interval) floor(burn_in / tune_interval) else 0L
+    ss_trace <- if (tune_pts > 0L) numeric(tune_pts) else numeric(0)
+    it_trace <- if (tune_pts > 0L) integer(tune_pts) else integer(0)
+    ar_trace <- if (tune_pts > 0L) numeric(tune_pts) else numeric(0)
+    idx_t <- 0L
 
     if (isTRUE(verbose)) {
       message("RW-MH: ", n_iter, " iters; burn-in ", burn_in)
@@ -614,6 +640,13 @@ MEP_latent <- function(
         ar <- accept / it
         if (ar > tune_threshold_hi) ss <- ss * 1.10
         if (ar < tune_threshold_lo) ss <- ss * 0.90
+
+        idx_t <- idx_t + 1L
+        if (idx_t <= length(ss_trace)) {
+          it_trace[idx_t] <- it
+          ar_trace[idx_t] <- ar
+          ss_trace[idx_t] <- ss
+        }
       }
     }
 
@@ -622,7 +655,14 @@ MEP_latent <- function(
       post = post,
       acceptance_rate = accept / (n_iter - 1),
       scaling_info = list(center = S$center, scale = S$scale),
-      Xw = Xw
+      Xw = Xw,
+      step_size_final = ss,
+      burnin_step_trace = data.frame(
+        iter = it_trace,
+        acceptance = ar_trace,
+        step_size = ss_trace,
+        row.names = NULL
+      )
     )
   }
 
@@ -635,6 +675,7 @@ MEP_latent <- function(
     acceptance_rate = numeric(),
     prop_matched = numeric(),
     posterior_ratio_scaled = character(),
+    step_size_final = numeric(),
     stringsAsFactors = FALSE
   )
   runs <- list()
@@ -693,6 +734,7 @@ MEP_latent <- function(
             acceptance_rate = ch$acceptance_rate,
             prop_matched = sum_one$prop_matched,
             posterior_ratio_scaled = ratio_str,
+            step_size_final = ch$step_size_final,
             stringsAsFactors = FALSE
           )
         )
@@ -707,7 +749,9 @@ MEP_latent <- function(
           acceptance_rate = ch$acceptance_rate,
           prop_matched = sum_one$prop_matched,
           posterior_means = sum_one$posterior_means,
-          posterior_ratio_scaled = ratio_str
+          posterior_ratio_scaled = ratio_str,
+          step_size_final = ch$step_size_final,
+          burnin_step_trace = ch$burnin_step_trace
         )
 
         gid <- gid + 1L
@@ -715,7 +759,6 @@ MEP_latent <- function(
     }
   }
 
-  # selection
   lo <- accept_window[1]
   hi <- accept_window[2]
   cand <- results_df[
@@ -740,7 +783,6 @@ MEP_latent <- function(
     }, numeric(1))
   }
 
-  # score: prefer lower ratio_term if defined, else prefer higher prop_matched
   if (any(is.finite(cand$ratio_term))) {
     cand <- cand[order(cand$ratio_term, -cand$prop_matched), , drop = FALSE]
   } else {
@@ -753,7 +795,6 @@ MEP_latent <- function(
   Sigma_best <- best_run$Sigma
   kappa_best <- best_run$kappa
 
-  # rerun best with multiple chains
   best_chains <- vector("list", n_chains_best)
   for (ch_i in seq_len(n_chains_best)) {
     ch <- run_chain_one(
@@ -787,14 +828,15 @@ MEP_latent <- function(
     best_chains[[ch_i]] <- list(
       post = ch$post,
       acceptance_rate = ch$acceptance_rate,
-      prop_matched = sum_one$prop_matched
+      prop_matched = sum_one$prop_matched,
+      step_size_final = ch$step_size_final,
+      burnin_step_trace = ch$burnin_step_trace
     )
   }
 
   best_acceptance <- mean(vapply(best_chains, function(x) x$acceptance_rate, numeric(1)), na.rm = TRUE)
   best_prop_matched <- mean(vapply(best_chains, function(x) x$prop_matched, numeric(1)), na.rm = TRUE)
 
-  # multi-chain diagnostics (Rhat and multi-chain ESS)
   diagnostics_multi <- list(
     rhat = rep(NA_real_, ncol(best_chains[[1]]$post)),
     rhat_max = NA_real_,
@@ -811,14 +853,12 @@ MEP_latent <- function(
     diagnostics_multi$ess_min <- suppressWarnings(min(diagnostics_multi$ess, na.rm = TRUE))
   }
 
-  # combine chains for final summaries
   if (combine_chains == "stack") {
     post_all <- do.call(rbind, lapply(best_chains, `[[`, "post"))
   } else {
     post_all <- best_chains[[1]]$post
   }
 
-  # Rebuild Xw for summaries
   S_final <- safe_scale(X_mat)
   X_work_final <- S_final$Xstd
   Xw_final <- cbind(Intercept = 1, X_work_final)
@@ -849,7 +889,8 @@ MEP_latent <- function(
     best_settings = list(
       mu = best_run$mu_str,
       Sigma_diag = best_run$sigma_diag_str,
-      kappa = kappa_best
+      kappa = kappa_best,
+      kappa_mode = kappa_mode
     ),
     best_acceptance = best_acceptance,
     best_prop_matched = best_prop_matched,
@@ -869,8 +910,11 @@ MEP_latent <- function(
       combine_chains = combine_chains,
       converged = convergence$converged,
       ess_min = convergence$ess_min,
-      geweke_max_abs = convergence$geweke_max_abs
+      geweke_max_abs = convergence$geweke_max_abs,
+      kappa_mode = kappa_mode
     ),
+    burnin_step_trace_best = lapply(best_chains, `[[`, "burnin_step_trace"),
+    step_size_final_best = vapply(best_chains, `[[`, numeric(1), "step_size_final"),
     draws = draws_out
   )
 }

@@ -16,7 +16,9 @@ MEP_latent(
   mu_vals = seq(-1, 1, by = 0.1),
   sigma0_intercept = 10,
   sigma_global_multipliers = c(0.1, 0.5, 1, 2, 5, 10),
+  kappa_mode = c("auto", "fixed"),
   kappa_vals = c(0.5, 1, 2),
+  kappa_fixed = 1,
   accept_window = c(0.3, 0.4),
   accept_target = 0.35,
   ci_level = 0.95,
@@ -77,8 +79,16 @@ For each multiplier \code{gm}, the prior scale matrix is
 \code{diag(c(sigma0_intercept, rep(gm, p-1)))}. Default
 \code{c(0.1, 0.5, 1, 2, 5, 10)}.}
 
+\item{kappa_mode}{How to set \eqn{\kappa}. \code{"auto"} uses \code{kappa_vals}
+as a grid and selects \eqn{\kappa} during the grid search. \code{"fixed"}
+skips the \eqn{\kappa} grid and uses \code{kappa_fixed} for all runs.
+Default \code{"auto"}.}
+
 \item{kappa_vals}{Numeric vector of positive \eqn{\kappa} values (EP shape)
-to include in the grid. Default \code{c(0.5, 1, 2)}.}
+used only when \code{kappa_mode="auto"}. Default \code{c(0.5, 1, 2)}.}
+
+\item{kappa_fixed}{Single positive value used when \code{kappa_mode="fixed"}.
+Default \code{1}.}
 
 \item{accept_window}{Numeric length-2 vector giving the acceptable
 MH acceptance-rate window. Default \code{c(0.30, 0.40)}.}
@@ -128,7 +138,8 @@ to declare convergence when \pkg{coda} is available. Default \code{2}.}
 A list with:
 \itemize{
 \item \code{best_settings}: list with chosen \code{mu} (as a string),
-\code{Sigma_diag} (prior diagonal as a string), and \code{kappa}.
+\code{Sigma_diag} (prior diagonal as a string), chosen \code{kappa},
+and \code{kappa_mode}.
 \item \code{best_acceptance}: MH acceptance rate of the selected run.
 \item \code{best_prop_matched}: posterior predictive “match” statistic for the selected run.
 \item \code{posterior_means}: posterior means (length \eqn{p}) for the selected run (working scale).
@@ -148,6 +159,11 @@ and \pkg{coda} is available): \code{rhat}, \code{rhat_max}, \code{ess}, \code{es
 \item \code{convergence}: list with single-posterior diagnostics for the final combined draws:
 \code{ess}, \code{geweke_z}, \code{ess_min}, \code{geweke_max_abs}, \code{converged}.
 \item \code{best}: list including \code{n_chains_best}, \code{chain_seeds_best}, and \code{combine_chains}.
+#'   \item \code{burnin_step_trace_best}: list of length \code{n_chains_best};
+each element is a data.frame with columns \code{iter}, \code{acceptance},
+\code{step_size}, recording burn-in tuning checkpoints for the best-point reruns.
+\item \code{step_size_final_best}: numeric vector of length \code{n_chains_best}
+giving the final tuned step size after burn-in for each best-point chain.
 }
 }
 \description{
@@ -193,6 +209,8 @@ Among all grid runs, candidates are those with acceptance in \code{accept_window
 (or closest to \code{accept_target} if none). When a GLM ratio is available, we prefer
 small mean absolute deviation from that ratio; ties are broken by higher posterior
 predictive agreement.
+#' When \code{kappa_mode="fixed"}, \eqn{\kappa} is not part of the grid and the
+selection is over \eqn{(\mu,\Sigma)} only.
 
 \strong{Evidence flags (Sig and stars).}
 The returned \code{scaled_summary} includes \code{Sig}, which is \code{TRUE}
