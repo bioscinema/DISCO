@@ -1,324 +1,64 @@
 #' Severity-Adaptive MEP for Mixture (multi-predictor) Logistic
 #'
-#' Fits a multi-predictor logistic model with a **Multivariate Exponential Power (MEP)**
-#' prior using a simple Random-Walk Metropolis–Hastings (RW–MH) sampler, where the *slope
-#' prior scales* are **anchored by univariate DISCO severities**. A small grid over the
-#' intercept prior mean, a global multiplier on slope scales, and the EP shape \eqn{\kappa}
-#' is explored; one run is selected via acceptance window, posterior predictive agreement,
-#' and—when available—closeness to GLM coefficient ratios relative to a reference predictor.
+#' Fits a multi-predictor logistic model with a Multivariate Exponential Power (MEP)
+#' prior using a Random-Walk Metropolis-Hastings (RW-MH) sampler, where slope prior scales
+#' are anchored by univariate DISCO severities. A small grid over intercept prior mean,
+#' a global multiplier on slope scales, and the EP shape kappa is explored; one run is
+#' selected via acceptance window, posterior predictive agreement, and (when available)
+#' closeness to GLM coefficient ratios relative to a reference predictor.
 #'
-#' **Design encoding.** Predictors in `X` are expanded with
-#' `model.matrix(~ ., data = X)` (intercept dropped for slopes). Numeric columns remain
-#' one column each. Factor columns are expanded to treatment-contrast dummies (baseline is
-#' the first level). The RW–MH is run on the *standardized* encoded design (z-scored
-#' columns). Optionally, coefficients can be back-transformed to the original (unscaled)
-#' encoded columns via `transform_back = "logit"|"SAS"|"Long"`.
-#'
-#' @section What this function does:
-#' \itemize{
-#'   \item Applies a single missing-data policy to `(y, X)` **once** (complete-case or external imputation).
-#'   \item For each *original* predictor in `X`, computes a univariate **severity**
-#'         using `DISCO::uni_separation()` on the same rows used for modeling.
-#'         Numeric predictors are **z-scored for the severity computation** (factors unchanged).
-#'   \item Maps severity \eqn{s \in [0,1]} to an anchor slope prior scale \eqn{\sigma_j(s)}
-#'         and an anchor \eqn{\kappa_j(s)}; the intercept uses a wide prior.
-#'   \item Builds a small grid: intercept mean offsets, global multipliers on the \eqn{\sigma_j},
-#'         and \eqn{\kappa} around the anchor average; runs RW–MH for each grid point.
-#'   \item Selects one run using a score favoring acceptance in a target window, high posterior
-#'         predictive agreement, and closeness of standardized slope ratios to **GLM** ratios
-#'         (with a single *reference* denominator).
-#' }
-#'
-#' @section Factor handling & column names:
-#' \itemize{
-#'   \item **Numeric predictors** appear as a single column with their original name
-#'         (e.g., `X3`). No suffixes are added.
-#'   \item **Factor predictors** are expanded by `model.matrix()` using treatment
-#'         contrasts with the *first level as the baseline*. For a two-level factor
-#'         `X3` with levels `A` and `B` (baseline = `A`), the encoded
-#'         design includes a single dummy column `X3B`, which equals 1 when
-#'         `X3 == "B"` and 0 when `X3 == "A"`. The coefficient for `X3B`
-#'         is the log-odds difference *B vs A* (controlling for other predictors).
-#'   \item The output `posterior$effects$Predictor` uses these encoded names: numeric
-#'         predictors as `"Xk"`; factor dummies as `"FactorLevel"` (e.g., `X3B`).
-#'   \item **Change the baseline** beforehand to alter dummy labels:
-#' \preformatted{X$X3 <- stats::relevel(X$X3, ref = "B")  # baseline becomes B; dummy shows as X3A}
-#'   \item If you truly intend to *treat a factor as numeric*, convert it yourself:
-#' \preformatted{X$X3 <- as.numeric(X$X3)  # no dummy expansion; column remains 'X3'}
-#' }
+#' Design encoding. Predictors in X are expanded with model.matrix(~ ., data = X)
+#' (intercept dropped for slopes). Numeric columns remain one column each. Factor columns
+#' are expanded to treatment-contrast dummies (baseline is the first level). The RW-MH is
+#' run on the standardized encoded design (z-scored columns). Optionally, coefficients can
+#' be back-transformed to the original (unscaled) encoded columns via
+#' transform_back = "logit"|"SAS"|"Long".
 #'
 #' @param y Numeric binary vector (0/1; logical or 2-level factor/character accepted; coerced to 0/1).
 #' @param X Matrix or data.frame of predictors (no intercept). May include factors.
-#'          Rows must align with `y`.
-#' @param missing One of `"complete"` or `"impute"`; the same choice is applied
-#'          to both modeling and severity diagnostics (shared rows/values). Default `"complete"`.
-#' @param impute_args Optional list controlling simple external imputation when
-#'          `missing = "impute"`. Supported:
-#'          `numeric_method = "median"|"mean"` (default `"median"`),
-#'          `factor_method = "mode"` (default `"mode"`).
+#'          Rows must align with y.
+#' @param missing One of "complete" or "impute"; applied once to both modeling and severity diagnostics.
+#'          Default "complete".
+#' @param impute_args Optional list controlling simple external imputation when missing = "impute".
+#'          Supported: numeric_method = "median"|"mean" (default "median"),
+#'          factor_method = "mode" (default "mode").
 #'
-#' @param n_iter Integer; MH iterations per grid point (including burn-in). Default `10000`.
-#' @param burn_in Integer; burn-in iterations per grid point. Default `1000`.
-#' @param init_beta Initial value(s) for the MH chain. Default `0.01`.
-#' @param step_size Proposal standard deviation for RW–MH. Default `0.40`.
+#' @param n_iter Integer; MH iterations per grid point (including burn-in). Default 10000.
+#' @param burn_in Integer; burn-in iterations per grid point. Default 1000.
+#' @param init_beta Initial value(s) for the MH chain. Default 0.01.
+#' @param step_size Proposal standard deviation for RW-MH. Default 0.40.
 #'
-#' @param mu_intercept_offsets Numeric vector of offsets added to \eqn{\mathrm{logit}(\bar{y})}
-#'          for the intercept prior mean grid. Default `seq(-1, 1, by = 0.2)`.
-#' @param sigma0_intercept Prior \eqn{\sigma_0} (sd) for the intercept (logit scale). Default `10`.
-#' @param sigma_global_multipliers Numeric vector of global multipliers applied to all
-#'          slope prior scales (after severity anchoring). Default `c(0.1, 0.5, 1, 2, 5, 10)`.
-#' @param sigma_hi Slope prior sd under mild separation (\eqn{s=0}). Default `5`.
-#' @param sigma_lo Slope prior sd under severe separation (\eqn{s=1}). Default `0.15`.
-#' @param kappa_min,kappa_max EP shape at \eqn{s=0} and \eqn{s=1}. Defaults `1`, `2.5`.
-#' @param kappa_delta Offsets added around the anchor-average \eqn{\kappa} to form the grid.
-#'          Default `seq(-0.5, 0.5, by = 0.2)` (truncated to the interval \eqn{[0.5, 3]}).
+#' @param mu_intercept_offsets Numeric vector of offsets added to logit(mean(y)) for intercept prior mean grid.
+#'          Default seq(-1, 1, by = 0.2).
+#' @param sigma0_intercept Prior sd for the intercept (logit scale). Default 10.
+#' @param sigma_global_multipliers Numeric vector of global multipliers applied to all slope prior scales.
+#'          Default c(0.1, 0.5, 1, 2, 5, 10).
+#' @param sigma_hi Slope prior sd under mild separation (s=0). Default 5.
+#' @param sigma_lo Slope prior sd under severe separation (s=1). Default 0.15.
+#' @param kappa_min,kappa_max EP shape at s=0 and s=1. Defaults 1 and 2.5.
+#' @param kappa_delta Offsets around anchor-average kappa to form the grid.
+#'          Default seq(-0.5, 0.5, by = 0.2), truncated to \eqn{[0.5, 3]}.
 #'
-#' @param accept_window Numeric length-2 vector; acceptable MH acceptance interval.
-#'          Default `c(0.30, 0.40)`.
-#' @param accept_target Scalar acceptance target used as a fallback (closest is preferred)
-#'          when no grid point falls inside `accept_window`. Default `0.35`.
+#' @param accept_window Numeric length-2 vector; acceptable MH acceptance interval. Default c(0.30, 0.40).
+#' @param accept_target Scalar acceptance target used if no grid point is inside accept_window. Default 0.35.
 #'
-#' @param ref Predictor *name* or *index* (in the original `X`) to serve as
-#'          ratio denominator. If `NULL` (default), the predictor with the highest
-#'          univariate severity is used. If the reference is a factor, the denominator
-#'          column is the *first* dummy generated for that factor.
-#' @param transform_back One of `"none"`, `"logit"`, `"SAS"`, `"Long"`. Controls which
-#'          back-transform is reported alongside standardized coefficients. Default `"none"`.
-#'          \itemize{
-#'            \item `"logit"`: per-**unit** effect on the original encoded column,
-#'                  computed as \eqn{\beta^{\mathrm{std}}/s_x}.
-#'            \item `"SAS"`: \eqn{\beta^{\mathrm{SAS}} = \beta^{\mathrm{logit}} \cdot \pi/\sqrt{3}}.
-#'            \item `"Long"`: \eqn{\beta^{\mathrm{Long}} = \beta^{\mathrm{logit}} \cdot (\pi/\sqrt{3} + 1)}.
-#'          }
-#' @param ci_level Credible interval level in (0,1). Default `0.95`.
-#' @param seed Optional integer; if provided, sets RNG seed for reproducibility.
-#' @param return_draws Logical; if `TRUE`, return the post-burn MH chain for the
-#'          selected grid run.
-#' @param ess_threshold Numeric; minimum effective sample size (ESS) required (across all
-#'        parameters) to declare convergence when `coda` is available. Default `150`.
-#' @param geweke_z_threshold Numeric; maximum allowed absolute Geweke z-score (across all
-#'        parameters) to declare convergence when `coda` is available. Default `2`.
-#' @param n_chains_best Integer; number of independent MH chains to rerun for the selected
-#'        best grid point only. Default `1`. When `n_chains_best >= 2` and package `coda`
-#'        is available, multi-chain diagnostics (Gelman-Rubin R-hat and ESS) are computed.
-#' @param chain_seeds_best Optional integer vector of length `n_chains_best`. Each value is used
-#'        as the RNG seed for the corresponding best-point chain. If `NULL`, seeds are generated
-#'        deterministically from `seed` (if provided) or from a random base seed.
-#' @param combine_chains One of `"stack"` or `"none"`. Controls how the selected best-point
-#'        chains are summarized:
-#'        \itemize{
-#'          \item `"stack"`: stack post burn-in draws across all best-point chains, then compute
-#'                posterior means, credible intervals, and convergence diagnostics from the pooled draws.
-#'          \item `"none"`: summarize using only the first best-point chain.
-#'        }
-#'        Default `"stack"`.
+#' @param ref Predictor name or index (in original X) to serve as ratio denominator. If NULL, uses max severity.
+#' @param transform_back One of "none","logit","SAS","Long". Default "none".
+#' @param ci_level Credible interval level in (0,1). Default 0.95.
+#' @param seed Optional integer RNG seed.
+#' @param return_draws Logical; if TRUE return post-burn draws for selected run.
+#' @param ess_threshold Minimum ESS required (requires coda). Default 150.
+#' @param geweke_z_threshold Maximum abs Geweke z allowed (requires coda). Default 2.
+#' @param n_chains_best Integer; number of MH chains to rerun for the selected best grid point. Default 1.
+#' @param chain_seeds_best Optional integer vector of length n_chains_best for best-point reruns.
+#' @param combine_chains One of "stack" or "none". Default "stack".
 #'
-#' @return A list with components:
-#' \itemize{
-#'   \item `ref_predictor`: list with `index` (1-based in original `X`) and `name`.
-#'   \item `severity`: data.frame with per-*original* predictor severities used to anchor prior scales:
-#'         columns `Predictor`, `Severity`.
+#' @param tune_threshold_hi,tune_threshold_lo Burn-in acceptance thresholds for multiplicative tuning
+#'        (increase if > hi; decrease if < lo). Defaults 0.45 and 0.20.
+#' @param tune_interval Iterations between tuning checks during burn-in. Default 1000.
 #'
-#'   \item `grid_summary`: data.frame summarizing all grid runs with columns:
-#'         \itemize{
-#'           \item `grid_id`: integer id for the grid point.
-#'           \item `mu`: character representation of the prior mean vector (intercept entry varies; others are 0).
-#'           \item `sigma_diag`: character representation of the diagonal of the prior scale matrix.
-#'           \item `kappa`: EP shape parameter used for that run.
-#'           \item `acceptance_rate`: MH acceptance rate.
-#'           \item `prop_matched`: posterior predictive agreement summary (proportion of observations with
-#'                 per-observation match probability >= 0.80, averaged).
-#'           \item `posterior_ratio_std`: character representation of standardized posterior mean ratios
-#'                 relative to the reference predictor (when defined).
-#'           \item `converged`: logical; convergence flag for this run (requires package `coda`, otherwise `NA`).
-#'           \item `ess_min`: numeric; minimum ESS across parameters for this run (requires `coda`, otherwise `NA`).
-#'           \item `geweke_max_abs`: numeric; maximum absolute Geweke z-score across parameters for this run
-#'                 (requires `coda`, otherwise `NA`).
-#'         }
+#' @return See function body for returned list components.
 #'
-#'   \item `best`: list describing the selected grid point with elements:
-#'         `grid_id`, `mu`, `sigma_diag`, `kappa`, `acceptance_rate`, `prop_matched`,
-#'         and diagnostics copied from the selected run:
-#'         `converged`, `ess_min`, `geweke_max_abs`.
-#'
-#'   \item `posterior`: list with
-#'         \itemize{
-#'           \item `means_std`: posterior means on the working scale (intercept + standardized encoded slopes),
-#'                 length = `1 + p_enc`.
-#'           \item `effects`: data.frame with one row per encoded predictor column (slopes only) containing:
-#'                 \itemize{
-#'                   \item `Predictor`: encoded column name (from `model.matrix`, intercept excluded).
-#'                   \item `Scaled`: posterior mean on standardized encoded design.
-#'                   \item `Scaled_CI_low`, `Scaled_CI_high`: credible interval endpoints on the standardized scale.
-#'                   \item `sig_scaled`: logical; `TRUE` if the `Scaled` credible interval excludes 0.
-#'                   \item `star_scaled`: `"*"` if `sig_scaled` is `TRUE`, else `""`.
-#'                   \item If `transform_back = "logit"`: `b_logit_original`, `b_logit_CI_low`, `b_logit_CI_high`,
-#'                         plus `sig_original`, `star_original` computed from that interval.
-#'                   \item If `transform_back = "SAS"`:  `b_SAS_original`, `b_SAS_CI_low`, `b_SAS_CI_high`,
-#'                         plus `sig_original`, `star_original`.
-#'                   \item If `transform_back = "Long"`: `b_Long_original`, `b_Long_CI_low`, `b_Long_CI_high`,
-#'                         plus `sig_original`, `star_original`.
-#'                 }
-#'         }
-#'
-#'   \item `convergence`: list of diagnostics for the selected run (requires `coda`; otherwise entries are `NA`):
-#'         \itemize{
-#'           \item `ess`: numeric vector of ESS for each parameter (intercept + slopes).
-#'           \item `geweke_z`: numeric vector of Geweke z-scores for each parameter.
-#'           \item `ess_min`: minimum ESS across parameters.
-#'           \item `geweke_max_abs`: maximum absolute Geweke z-score across parameters.
-#'           \item `converged`: logical; `TRUE` if `ess_min >= ess_threshold` and
-#'                 `geweke_max_abs <= geweke_z_threshold`.
-#'         }
-#'   \item `diagnostics_multi`: list of multi-chain diagnostics for the best grid point.
-#'         Computed only when `n_chains_best >= 2` and package `coda` is available; otherwise NA.
-#'         \itemize{
-#'           \item `rhat`: numeric vector of Gelman-Rubin point estimates (one per parameter).
-#'           \item `rhat_max`: maximum R-hat across parameters.
-#'           \item `ess`: numeric vector of effective sample sizes from the multi-chain object.
-#'           \item `ess_min`: minimum ESS across parameters.
-#'         }
-#'
-#'   \item `best_chains`: summary of per-chain diagnostics and performance for the best grid point:
-#'         \itemize{
-#'           \item `diagnostics`: list of per-chain single-chain diagnostics (ESS, Geweke, etc).
-#'           \item `acceptance_rate`: numeric vector, one per chain.
-#'           \item `prop_matched`: numeric vector, one per chain.
-#'           \item `chain_seeds`: integer vector of seeds used.
-#'         }
-#'
-#'   \item `best$diagnostics_multi`: a copy of `diagnostics_multi` stored inside `best` for convenience.
-#'
-#'   \item `draws`: matrix of MH draws after burn-in for the selected run
-#'         (returned only when `return_draws = TRUE`).
-#' }
-#'
-#' @details
-#' **Standardization & back-transforms.** The sampler runs on z-scored encoded columns.
-#' `Scaled` slopes are posterior means on this working scale. Let \eqn{s_x} be the SD of the
-#' unscaled encoded column: `logit` back-transform uses \eqn{\beta^{\mathrm{std}}/s_x};
-#' `SAS` and `Long` multiply the `logit` transform by \eqn{\pi/\sqrt{3}} and \eqn{\pi/\sqrt{3}+1}
-#' respectively.
-#'
-#' **Reference predictor & ratios.** The ratio denominator is chosen from the original
-#' `X` columns (highest DISCO severity by default). If that predictor is a factor,
-#' the denominator is the *first* dummy column generated for that factor by
-#' `model.matrix()`. GLM ratios are computed on the standardized encoded design.
-#'
-#' **Shared missing handling.** The `missing` choice governs a single preprocessing
-#' step applied to `(y, X)`. With `missing = "complete"` we drop rows with any NA in
-#' `y` or `X`. With `missing = "impute"` we drop rows with NA in `y` and impute
-#' NAs in `X` using `impute_args`. The same processed data are then used for both the
-#' MEP fit and the DISCO severities (we call `DISCO::uni_separation(..., missing = "complete")`
-#' because the data are already prepared). **Numeric predictors are z-scored when computing
-#' DISCO severities** (factors unchanged) to align the anchoring scale with the modeling scale.
-#'
-#' @seealso `DISCO::uni_separation`, `DISCO::latent_separation`
-#'
-#' @importFrom DISCO uni_separation
-#' @importFrom stats glm binomial coef plogis qlogis sd model.matrix terms median quantile rbinom complete.cases
-#' @examples
-#' \donttest{
-#' ## Toy data with one numeric factor and one 2-level factor
-#' y <- c(0,0,0,0, 1,1,1,1)
-#' X_toy <- data.frame(
-#'   X1 = c(-1.86, -0.81,  1.32, -0.40,  0.91,  2.49,  0.34,  0.25),
-#'   X2 = c( 0.52,  -0.07,  0.60,  0.67, -1.39,  0.16, -1.40, -0.09),
-#'   X3 = factor(c(rep("A", 4), rep("B", 4)))
-#' )
-#'
-#' ## 0) Univariate DISCO diagnostics (complete-case)
-#' d3 <- DISCO::uni_separation(data.frame(y=y, X3=X_toy$X3), "X3", "y", "complete")
-#' d1 <- DISCO::uni_separation(data.frame(y=y, X1=X_toy$X1), "X1", "y", "complete")
-#' d2 <- DISCO::uni_separation(data.frame(y=y, X2=X_toy$X2), "X2", "y", "complete")
-#' d3$separation_type; d1$separation_type; d2$separation_type
-#'
-#' ## 1) Standardized-only coefficients (includes CIs for Scaled slopes)
-#' fit_std <- MEP_mixture(
-#'   y, X_toy,
-#'   n_iter = 4000, burn_in = 1000, seed = 42,
-#'   transform_back = "none", ci_level = 0.95
-#' )
-#' head(fit_std$posterior$effects)
-#' # Columns: Predictor, Scaled, Scaled_CI_low, Scaled_CI_high
-#'
-#' ## 2) Back-transform to LOGIT (per-encoded-unit effect) with CIs
-#' fit_logit <- MEP_mixture(
-#'   y, X_toy,
-#'   n_iter = 4000, burn_in = 1000, seed = 42,
-#'   transform_back = "logit"
-#' )
-#' subset(fit_logit$posterior$effects,
-#'        select = c("Predictor","b_logit_original","b_logit_CI_low","b_logit_CI_high"))
-#'
-#' ## 3) Alternative effect scales with CIs (choose ONE per run)
-#' fit_sas <- MEP_mixture(
-#'   y, X_toy,
-#'   n_iter = 4000, burn_in = 1000, seed = 42,
-#'   transform_back = "SAS"
-#' )
-#' fit_long <- MEP_mixture(
-#'   y, X_toy,
-#'   n_iter = 4000, burn_in = 1000, seed = 42,
-#'   transform_back = "Long"
-#' )
-#' subset(fit_sas$posterior$effects,
-#'        select = c("Predictor","b_SAS_original","b_SAS_CI_low","b_SAS_CI_high"))
-#' subset(fit_long$posterior$effects,
-#'        select = c("Predictor","b_Long_original","b_Long_CI_low","b_Long_CI_high"))
-#'
-#' ## 4) Change baseline level to rename the dummy (now "X3A" = A vs B)
-#' X_toy2 <- X_toy
-#' X_toy2$X3 <- stats::relevel(X_toy2$X3, ref = "B")
-#' fit_base <- MEP_mixture(
-#'   y, X_toy2,
-#'   n_iter = 3000, burn_in = 800, seed = 7,
-#'   transform_back = "logit"
-#' )
-#' head(fit_base$posterior$effects)   # dummy appears as "X3A"
-#'
-#' ## 5) Shared missing handling
-#' X_miss <- X_toy
-#' X_miss$X1[c(2,6)] <- NA      # numeric NA
-#' X_miss$X3[7]      <- NA      # factor NA
-#'
-#' # (a) complete-case: drops rows with any NA in X
-#' fit_cc <- MEP_mixture(
-#'   y, X_miss,
-#'   missing = "complete",
-#'   n_iter = 3000, burn_in = 800, seed = 9, transform_back = "Long"
-#' )
-#' head(fit_cc$posterior$effects)
-#'
-#' # (b) impute: imputes X (numeric=median; factor=mode by default),
-#' #     then uses the same imputed data for DISCO + model
-#' fit_im <- MEP_mixture(
-#'   y, X_miss,
-#'   missing = "impute",
-#'   impute_args = list(numeric_method = "median"),
-#'   n_iter = 3000, burn_in = 800, seed = 9, transform_back = "logit"
-#' )
-#' head(fit_im$posterior$effects)
-#'
-#' ## 6) Inspect selection & ratios
-#' fit <- fit_logit
-#' fit$severity
-#' head(fit$grid_summary)
-#' fit$best
-#' }
-#'
-#' ## 7) Rerun the selected best grid point with multiple chains
-#' fit_multi <- MEP_mixture(
-#'   y, X_toy,
-#'   n_iter = 4000, burn_in = 1000,
-#'   n_chains_best = 4,
-#'   chain_seeds_best = c(101, 102, 103, 104),
-#'   combine_chains = "stack",
-#'   transform_back = "none",
-#'   seed = 9
-#' )
-#' fit_multi$diagnostics_multi
-#' head(fit_multi$posterior$effects)
 #' @export
 MEP_mixture <- function(
     y, X,
@@ -347,7 +87,10 @@ MEP_mixture <- function(
     geweke_z_threshold = 2,
     n_chains_best = 1,
     chain_seeds_best = NULL,
-    combine_chains = c("stack","none")
+    combine_chains = c("stack","none"),
+    tune_threshold_hi = 0.45,
+    tune_threshold_lo = 0.20,
+    tune_interval = 1000
 ) {
 
   `%||%` <- function(a, b) if (!is.null(a)) a else b
@@ -368,6 +111,9 @@ MEP_mixture <- function(
         }
       } else if (is.factor(v)) {
         if (anyNA(v)) {
+          if (!identical(fac_method, "mode")) {
+            warning("Only factor_method = 'mode' is supported here; using mode.")
+          }
           tab <- table(v, useNA = "no")
           if (length(tab)) {
             lvl <- names(tab)[which.max(tab)]
@@ -378,7 +124,9 @@ MEP_mixture <- function(
           }
         }
       } else {
-        if (anyNA(v)) v[is.na(v)] <- 0
+        v2 <- suppressWarnings(as.numeric(v))
+        if (anyNA(v2)) v2[is.na(v2)] <- 0
+        v <- v2
       }
       df[[nm]] <- v
     }
@@ -408,7 +156,7 @@ MEP_mixture <- function(
     chain_seeds_best <- base_seed + seq_len(n_chains_best)
   }
 
-  # normalize y
+  # normalize y to {0,1}
   if (!is.numeric(y)) {
     if (is.logical(y)) y <- as.integer(y)
     else if (is.factor(y) || is.character(y)) y <- as.integer(factor(y)) - 1L
@@ -418,21 +166,28 @@ MEP_mixture <- function(
 
   # data prep
   X_df <- as.data.frame(X, stringsAsFactors = TRUE)
-  stopifnot(nrow(X_df) == length(y))
+  if (nrow(X_df) != length(y)) stop("Rows of X must match length of y.", call. = FALSE)
+  if (ncol(X_df) < 1L) stop("X must have at least one predictor.", call. = FALSE)
 
+  rows_used <- NULL
   if (missing == "complete") {
     idx <- stats::complete.cases(data.frame(y = y, X_df, check.names = FALSE))
+    if (!any(idx)) stop("No complete rows for y and X.", call. = FALSE)
+    rows_used <- which(idx)
     y <- y[idx]
     X_df <- X_df[idx, , drop = FALSE]
   } else {
     keep <- !is.na(y)
+    if (!any(keep)) stop("No rows with observed y.", call. = FALSE)
+    rows_used <- which(keep)
     y <- y[keep]
     X_df <- X_df[keep, , drop = FALSE]
     X_df <- impute_frame(X_df, impute_args)
   }
 
-  if (ncol(X_df) < 1L) stop("X must have at least one predictor.", call. = FALSE)
-  if (length(y) < 2L || length(unique(y)) < 2L) stop("Outcome must contain both 0 and 1 after missing handling.", call. = FALSE)
+  if (length(y) < 2L || length(unique(y)) < 2L) {
+    stop("Outcome must contain both 0 and 1 after missing handling.", call. = FALSE)
+  }
 
   # encoded design
   mm <- stats::model.matrix(~ . , data = X_df)
@@ -443,7 +198,7 @@ MEP_mixture <- function(
   p_enc <- ncol(X_mm)
   p_terms <- length(term_labs)
 
-  # severities
+  # severities per original term
   sev_vec <- rep(0, p_terms)
   for (j in seq_len(p_terms)) {
     pred <- scale_if_num(X_df[[term_labs[j]]])
@@ -460,12 +215,12 @@ MEP_mixture <- function(
   }
   sev_df <- data.frame(Predictor = term_labs, Severity = sev_vec, stringsAsFactors = FALSE)
 
-  # reference predictor
+  # reference predictor selection
   if (is.null(ref)) {
     ref_idx_term <- which.max(sev_vec)
   } else if (is.character(ref)) {
     ref_idx_term <- match(ref, term_labs)
-    if (is.na(ref_idx_term)) stop("`ref` not found in colnames(X).", call. = FALSE)
+    if (is.na(ref_idx_term)) stop("`ref` not found in predictors.", call. = FALSE)
   } else {
     ref_idx_term <- as.integer(ref)
     if (ref_idx_term < 1 || ref_idx_term > p_terms) stop("`ref` index out of range.", call. = FALSE)
@@ -474,7 +229,7 @@ MEP_mixture <- function(
   ref_name <- term_labs[ref_idx_term]
   ref_enc_cols <- which(assign_mm == ref_idx_term)
   if (!length(ref_enc_cols)) stop("Internal: no encoded columns for selected `ref` predictor.", call. = FALSE)
-  ref_pos_enc <- 1 + ref_enc_cols[1]
+  ref_pos_enc <- 1 + ref_enc_cols[1]  # position in full beta (Intercept + slopes)
 
   map_uni_severity <- function(s, sigma_hi, sigma_lo, kappa_min, kappa_max) {
     s <- max(0, min(1, as.numeric(s)))
@@ -601,6 +356,7 @@ MEP_mixture <- function(
   run_MH_sampler <- function(
     n_iter, init_beta, step_size, X_enc, y, mu, Sigma, kappa,
     burn_in = 1000, transform_back, ci_level, ess_threshold, geweke_z_threshold,
+    tune_threshold_hi = 0.45, tune_threshold_lo = 0.20, tune_interval = 1000,
     chain_seed = NULL
   ) {
     if (!is.null(chain_seed)) set.seed(as.integer(chain_seed))
@@ -624,6 +380,7 @@ MEP_mixture <- function(
 
     p_all <- ncol(X)
     chain <- matrix(0, n_iter, p_all)
+    colnames(chain) <- c("Intercept", colnames(X_enc))
 
     if (length(init_beta) == 1L) {
       init_vec <- rep(as.numeric(init_beta), p_all)
@@ -638,6 +395,13 @@ MEP_mixture <- function(
     acc <- 0L
     cur_step <- step_size
 
+    # record burn-in tuning checkpoints
+    tune_pts <- if (burn_in >= tune_interval && tune_interval > 0) floor(burn_in / tune_interval) else 0L
+    ss_trace <- if (tune_pts > 0L) numeric(tune_pts) else numeric(0)
+    it_trace <- if (tune_pts > 0L) integer(tune_pts) else integer(0)
+    ar_trace <- if (tune_pts > 0L) numeric(tune_pts) else numeric(0)
+    idx_t <- 0L
+
     for (t in 2:n_iter) {
       prop <- chain[t - 1, ] + cur_step * rnorm(p_all)
       prop_lp <- log_post(prop)
@@ -650,10 +414,17 @@ MEP_mixture <- function(
         chain[t, ] <- chain[t - 1, ]
       }
 
-      if (t <= burn_in && (t %% 1000) == 0) {
+      if (t <= burn_in && tune_interval > 0 && (t %% tune_interval) == 0) {
         ar <- acc / t
-        if (ar > 0.45) cur_step <- cur_step * 1.10
-        if (ar < 0.20) cur_step <- cur_step * 0.90
+        if (ar > tune_threshold_hi) cur_step <- cur_step * 1.10
+        if (ar < tune_threshold_lo) cur_step <- cur_step * 0.90
+
+        idx_t <- idx_t + 1L
+        if (idx_t <= length(ss_trace)) {
+          it_trace[idx_t] <- t
+          ar_trace[idx_t] <- ar
+          ss_trace[idx_t] <- cur_step
+        }
       }
     }
 
@@ -662,10 +433,10 @@ MEP_mixture <- function(
     # posterior predictive check
     n_rep <- nrow(post)
     n_obs <- nrow(X)
-    y_rep <- matrix(0, nrow = n_rep, ncol = n_obs)
+    y_rep <- matrix(0L, nrow = n_rep, ncol = n_obs)
     for (i in seq_len(n_rep)) {
       pr_i <- 1 / (1 + exp(-(X %*% post[i, ])))
-      y_rep[i, ] <- rbinom(n_obs, 1, pr_i)
+      y_rep[i, ] <- stats::rbinom(n_obs, 1, pr_i)
     }
     p_match <- colMeans(sweep(y_rep, 2, y, `==`))
     prop_matched <- mean(p_match >= 0.80, na.rm = TRUE)
@@ -686,7 +457,14 @@ MEP_mixture <- function(
       effects = sum_obj$effects,
       prop_matched = prop_matched,
       acceptance_rate = acc / (n_iter - 1),
-      diagnostics = sum_obj$diagnostics
+      diagnostics = sum_obj$diagnostics,
+      step_size_final = cur_step,
+      burnin_step_trace = data.frame(
+        iter = it_trace,
+        acceptance = ar_trace,
+        step_size = ss_trace,
+        row.names = NULL
+      )
     )
   }
 
@@ -699,6 +477,7 @@ MEP_mixture <- function(
     acceptance_rate = numeric(),
     prop_matched = numeric(),
     posterior_ratio_std = character(),
+    step_size_final = numeric(),
     converged = logical(),
     ess_min = numeric(),
     geweke_max_abs = numeric(),
@@ -730,6 +509,9 @@ MEP_mixture <- function(
           ci_level = ci_level,
           ess_threshold = ess_threshold,
           geweke_z_threshold = geweke_z_threshold,
+          tune_threshold_hi = tune_threshold_hi,
+          tune_threshold_lo = tune_threshold_lo,
+          tune_interval = tune_interval,
           chain_seed = grid_chain_seed
         )
 
@@ -757,6 +539,7 @@ MEP_mixture <- function(
             acceptance_rate = res$acceptance_rate,
             prop_matched = res$prop_matched,
             posterior_ratio_std = ratio_std_str,
+            step_size_final = res$step_size_final,
             converged = conv_val,
             ess_min = ess_min_val,
             geweke_max_abs = geweke_max_val,
@@ -770,7 +553,7 @@ MEP_mixture <- function(
     }
   }
 
-  # GLM ratios
+  # GLM ratios on standardized encoded design
   X_scaled <- scale(X_mm)
   glm_fit <- try(suppressWarnings(stats::glm(
     y ~ .,
@@ -867,6 +650,9 @@ MEP_mixture <- function(
       ci_level = ci_level,
       ess_threshold = ess_threshold,
       geweke_z_threshold = geweke_z_threshold,
+      tune_threshold_hi = tune_threshold_hi,
+      tune_threshold_lo = tune_threshold_lo,
+      tune_interval = tune_interval,
       chain_seed = chain_seeds_best[ch]
     )
   }
@@ -874,7 +660,7 @@ MEP_mixture <- function(
   prop_matched_best <- mean(vapply(best_chains, function(x) x$prop_matched, numeric(1)), na.rm = TRUE)
   acc_best <- mean(vapply(best_chains, function(x) x$acceptance_rate, numeric(1)), na.rm = TRUE)
 
-  # multi-chain diagnostics (Rhat + multi-chain ESS)
+  # multi-chain diagnostics
   diagnostics_multi <- list(
     rhat = rep(NA_real_, ncol(best_chains[[1]]$chain)),
     rhat_max = NA_real_,
@@ -953,6 +739,10 @@ MEP_mixture <- function(
       prop_matched = vapply(best_chains, function(x) x$prop_matched, numeric(1)),
       chain_seeds = chain_seeds_best
     ),
+    rows_used = rows_used,
+    missing_info = list(policy = missing, imputed = identical(missing, "impute")),
+    burnin_step_trace_best = lapply(best_chains, `[[`, "burnin_step_trace"),
+    step_size_final_best = vapply(best_chains, `[[`, numeric(1), "step_size_final"),
     draws = draws_out
   )
 }

@@ -32,354 +32,95 @@ MEP_mixture(
   geweke_z_threshold = 2,
   n_chains_best = 1,
   chain_seeds_best = NULL,
-  combine_chains = c("stack", "none")
+  combine_chains = c("stack", "none"),
+  tune_threshold_hi = 0.45,
+  tune_threshold_lo = 0.2,
+  tune_interval = 1000
 )
 }
 \arguments{
 \item{y}{Numeric binary vector (0/1; logical or 2-level factor/character accepted; coerced to 0/1).}
 
 \item{X}{Matrix or data.frame of predictors (no intercept). May include factors.
-Rows must align with \code{y}.}
+Rows must align with y.}
 
-\item{missing}{One of \code{"complete"} or \code{"impute"}; the same choice is applied
-to both modeling and severity diagnostics (shared rows/values). Default \code{"complete"}.}
+\item{missing}{One of "complete" or "impute"; applied once to both modeling and severity diagnostics.
+Default "complete".}
 
-\item{impute_args}{Optional list controlling simple external imputation when
-\code{missing = "impute"}. Supported:
-\code{numeric_method = "median"|"mean"} (default \code{"median"}),
-\code{factor_method = "mode"} (default \code{"mode"}).}
+\item{impute_args}{Optional list controlling simple external imputation when missing = "impute".
+Supported: numeric_method = "median"|"mean" (default "median"),
+factor_method = "mode" (default "mode").}
 
-\item{n_iter}{Integer; MH iterations per grid point (including burn-in). Default \code{10000}.}
+\item{n_iter}{Integer; MH iterations per grid point (including burn-in). Default 10000.}
 
-\item{burn_in}{Integer; burn-in iterations per grid point. Default \code{1000}.}
+\item{burn_in}{Integer; burn-in iterations per grid point. Default 1000.}
 
-\item{init_beta}{Initial value(s) for the MH chain. Default \code{0.01}.}
+\item{init_beta}{Initial value(s) for the MH chain. Default 0.01.}
 
-\item{step_size}{Proposal standard deviation for RW–MH. Default \code{0.40}.}
+\item{step_size}{Proposal standard deviation for RW-MH. Default 0.40.}
 
-\item{mu_intercept_offsets}{Numeric vector of offsets added to \eqn{\mathrm{logit}(\bar{y})}
-for the intercept prior mean grid. Default \code{seq(-1, 1, by = 0.2)}.}
+\item{mu_intercept_offsets}{Numeric vector of offsets added to logit(mean(y)) for intercept prior mean grid.
+Default seq(-1, 1, by = 0.2).}
 
-\item{sigma0_intercept}{Prior \eqn{\sigma_0} (sd) for the intercept (logit scale). Default \code{10}.}
+\item{sigma0_intercept}{Prior sd for the intercept (logit scale). Default 10.}
 
-\item{sigma_global_multipliers}{Numeric vector of global multipliers applied to all
-slope prior scales (after severity anchoring). Default \code{c(0.1, 0.5, 1, 2, 5, 10)}.}
+\item{sigma_global_multipliers}{Numeric vector of global multipliers applied to all slope prior scales.
+Default c(0.1, 0.5, 1, 2, 5, 10).}
 
-\item{sigma_hi}{Slope prior sd under mild separation (\eqn{s=0}). Default \code{5}.}
+\item{sigma_hi}{Slope prior sd under mild separation (s=0). Default 5.}
 
-\item{sigma_lo}{Slope prior sd under severe separation (\eqn{s=1}). Default \code{0.15}.}
+\item{sigma_lo}{Slope prior sd under severe separation (s=1). Default 0.15.}
 
-\item{kappa_min, kappa_max}{EP shape at \eqn{s=0} and \eqn{s=1}. Defaults \code{1}, \code{2.5}.}
+\item{kappa_min, kappa_max}{EP shape at s=0 and s=1. Defaults 1 and 2.5.}
 
-\item{kappa_delta}{Offsets added around the anchor-average \eqn{\kappa} to form the grid.
-Default \code{seq(-0.5, 0.5, by = 0.2)} (truncated to the interval \eqn{[0.5, 3]}).}
+\item{kappa_delta}{Offsets around anchor-average kappa to form the grid.
+Default seq(-0.5, 0.5, by = 0.2), truncated to \eqn{[0.5, 3]}.}
 
-\item{accept_window}{Numeric length-2 vector; acceptable MH acceptance interval.
-Default \code{c(0.30, 0.40)}.}
+\item{accept_window}{Numeric length-2 vector; acceptable MH acceptance interval. Default c(0.30, 0.40).}
 
-\item{accept_target}{Scalar acceptance target used as a fallback (closest is preferred)
-when no grid point falls inside \code{accept_window}. Default \code{0.35}.}
+\item{accept_target}{Scalar acceptance target used if no grid point is inside accept_window. Default 0.35.}
 
-\item{ref}{Predictor \emph{name} or \emph{index} (in the original \code{X}) to serve as
-ratio denominator. If \code{NULL} (default), the predictor with the highest
-univariate severity is used. If the reference is a factor, the denominator
-column is the \emph{first} dummy generated for that factor.}
+\item{ref}{Predictor name or index (in original X) to serve as ratio denominator. If NULL, uses max severity.}
 
-\item{transform_back}{One of \code{"none"}, \code{"logit"}, \code{"SAS"}, \code{"Long"}. Controls which
-back-transform is reported alongside standardized coefficients. Default \code{"none"}.
-\itemize{
-\item \code{"logit"}: per-\strong{unit} effect on the original encoded column,
-computed as \eqn{\beta^{\mathrm{std}}/s_x}.
-\item \code{"SAS"}: \eqn{\beta^{\mathrm{SAS}} = \beta^{\mathrm{logit}} \cdot \pi/\sqrt{3}}.
-\item \code{"Long"}: \eqn{\beta^{\mathrm{Long}} = \beta^{\mathrm{logit}} \cdot (\pi/\sqrt{3} + 1)}.
-}}
+\item{transform_back}{One of "none","logit","SAS","Long". Default "none".}
 
-\item{ci_level}{Credible interval level in (0,1). Default \code{0.95}.}
+\item{ci_level}{Credible interval level in (0,1). Default 0.95.}
 
-\item{seed}{Optional integer; if provided, sets RNG seed for reproducibility.}
+\item{seed}{Optional integer RNG seed.}
 
-\item{return_draws}{Logical; if \code{TRUE}, return the post-burn MH chain for the
-selected grid run.}
+\item{return_draws}{Logical; if TRUE return post-burn draws for selected run.}
 
-\item{ess_threshold}{Numeric; minimum effective sample size (ESS) required (across all
-parameters) to declare convergence when \code{coda} is available. Default \code{150}.}
+\item{ess_threshold}{Minimum ESS required (requires coda). Default 150.}
 
-\item{geweke_z_threshold}{Numeric; maximum allowed absolute Geweke z-score (across all
-parameters) to declare convergence when \code{coda} is available. Default \code{2}.}
+\item{geweke_z_threshold}{Maximum abs Geweke z allowed (requires coda). Default 2.}
 
-\item{n_chains_best}{Integer; number of independent MH chains to rerun for the selected
-best grid point only. Default \code{1}. When \code{n_chains_best >= 2} and package \code{coda}
-is available, multi-chain diagnostics (Gelman-Rubin R-hat and ESS) are computed.}
+\item{n_chains_best}{Integer; number of MH chains to rerun for the selected best grid point. Default 1.}
 
-\item{chain_seeds_best}{Optional integer vector of length \code{n_chains_best}. Each value is used
-as the RNG seed for the corresponding best-point chain. If \code{NULL}, seeds are generated
-deterministically from \code{seed} (if provided) or from a random base seed.}
+\item{chain_seeds_best}{Optional integer vector of length n_chains_best for best-point reruns.}
 
-\item{combine_chains}{One of \code{"stack"} or \code{"none"}. Controls how the selected best-point
-chains are summarized:
-\itemize{
-\item \code{"stack"}: stack post burn-in draws across all best-point chains, then compute
-posterior means, credible intervals, and convergence diagnostics from the pooled draws.
-\item \code{"none"}: summarize using only the first best-point chain.
-}
-Default \code{"stack"}.}
+\item{combine_chains}{One of "stack" or "none". Default "stack".}
+
+\item{tune_threshold_hi, tune_threshold_lo}{Burn-in acceptance thresholds for multiplicative tuning
+(increase if > hi; decrease if < lo). Defaults 0.45 and 0.20.}
+
+\item{tune_interval}{Iterations between tuning checks during burn-in. Default 1000.}
 }
 \value{
-A list with components:
-\itemize{
-\item \code{ref_predictor}: list with \code{index} (1-based in original \code{X}) and \code{name}.
-\item \code{severity}: data.frame with per-\emph{original} predictor severities used to anchor prior scales:
-columns \code{Predictor}, \code{Severity}.
-
-\item \code{grid_summary}: data.frame summarizing all grid runs with columns:
-\itemize{
-\item \code{grid_id}: integer id for the grid point.
-\item \code{mu}: character representation of the prior mean vector (intercept entry varies; others are 0).
-\item \code{sigma_diag}: character representation of the diagonal of the prior scale matrix.
-\item \code{kappa}: EP shape parameter used for that run.
-\item \code{acceptance_rate}: MH acceptance rate.
-\item \code{prop_matched}: posterior predictive agreement summary (proportion of observations with
-per-observation match probability >= 0.80, averaged).
-\item \code{posterior_ratio_std}: character representation of standardized posterior mean ratios
-relative to the reference predictor (when defined).
-\item \code{converged}: logical; convergence flag for this run (requires package \code{coda}, otherwise \code{NA}).
-\item \code{ess_min}: numeric; minimum ESS across parameters for this run (requires \code{coda}, otherwise \code{NA}).
-\item \code{geweke_max_abs}: numeric; maximum absolute Geweke z-score across parameters for this run
-(requires \code{coda}, otherwise \code{NA}).
-}
-
-\item \code{best}: list describing the selected grid point with elements:
-\code{grid_id}, \code{mu}, \code{sigma_diag}, \code{kappa}, \code{acceptance_rate}, \code{prop_matched},
-and diagnostics copied from the selected run:
-\code{converged}, \code{ess_min}, \code{geweke_max_abs}.
-
-\item \code{posterior}: list with
-\itemize{
-\item \code{means_std}: posterior means on the working scale (intercept + standardized encoded slopes),
-length = \code{1 + p_enc}.
-\item \code{effects}: data.frame with one row per encoded predictor column (slopes only) containing:
-\itemize{
-\item \code{Predictor}: encoded column name (from \code{model.matrix}, intercept excluded).
-\item \code{Scaled}: posterior mean on standardized encoded design.
-\item \code{Scaled_CI_low}, \code{Scaled_CI_high}: credible interval endpoints on the standardized scale.
-\item \code{sig_scaled}: logical; \code{TRUE} if the \code{Scaled} credible interval excludes 0.
-\item \code{star_scaled}: \code{"*"} if \code{sig_scaled} is \code{TRUE}, else \code{""}.
-\item If \code{transform_back = "logit"}: \code{b_logit_original}, \code{b_logit_CI_low}, \code{b_logit_CI_high},
-plus \code{sig_original}, \code{star_original} computed from that interval.
-\item If \code{transform_back = "SAS"}:  \code{b_SAS_original}, \code{b_SAS_CI_low}, \code{b_SAS_CI_high},
-plus \code{sig_original}, \code{star_original}.
-\item If \code{transform_back = "Long"}: \code{b_Long_original}, \code{b_Long_CI_low}, \code{b_Long_CI_high},
-plus \code{sig_original}, \code{star_original}.
-}
-}
-
-\item \code{convergence}: list of diagnostics for the selected run (requires \code{coda}; otherwise entries are \code{NA}):
-\itemize{
-\item \code{ess}: numeric vector of ESS for each parameter (intercept + slopes).
-\item \code{geweke_z}: numeric vector of Geweke z-scores for each parameter.
-\item \code{ess_min}: minimum ESS across parameters.
-\item \code{geweke_max_abs}: maximum absolute Geweke z-score across parameters.
-\item \code{converged}: logical; \code{TRUE} if \code{ess_min >= ess_threshold} and
-\code{geweke_max_abs <= geweke_z_threshold}.
-}
-\item \code{diagnostics_multi}: list of multi-chain diagnostics for the best grid point.
-Computed only when \code{n_chains_best >= 2} and package \code{coda} is available; otherwise NA.
-\itemize{
-\item \code{rhat}: numeric vector of Gelman-Rubin point estimates (one per parameter).
-\item \code{rhat_max}: maximum R-hat across parameters.
-\item \code{ess}: numeric vector of effective sample sizes from the multi-chain object.
-\item \code{ess_min}: minimum ESS across parameters.
-}
-
-\item \code{best_chains}: summary of per-chain diagnostics and performance for the best grid point:
-\itemize{
-\item \code{diagnostics}: list of per-chain single-chain diagnostics (ESS, Geweke, etc).
-\item \code{acceptance_rate}: numeric vector, one per chain.
-\item \code{prop_matched}: numeric vector, one per chain.
-\item \code{chain_seeds}: integer vector of seeds used.
-}
-
-\item \code{best$diagnostics_multi}: a copy of \code{diagnostics_multi} stored inside \code{best} for convenience.
-
-\item \code{draws}: matrix of MH draws after burn-in for the selected run
-(returned only when \code{return_draws = TRUE}).
-}
+See function body for returned list components.
 }
 \description{
-Fits a multi-predictor logistic model with a \strong{Multivariate Exponential Power (MEP)}
-prior using a simple Random-Walk Metropolis–Hastings (RW–MH) sampler, where the \emph{slope
-prior scales} are \strong{anchored by univariate DISCO severities}. A small grid over the
-intercept prior mean, a global multiplier on slope scales, and the EP shape \eqn{\kappa}
-is explored; one run is selected via acceptance window, posterior predictive agreement,
-and—when available—closeness to GLM coefficient ratios relative to a reference predictor.
+Fits a multi-predictor logistic model with a Multivariate Exponential Power (MEP)
+prior using a Random-Walk Metropolis-Hastings (RW-MH) sampler, where slope prior scales
+are anchored by univariate DISCO severities. A small grid over intercept prior mean,
+a global multiplier on slope scales, and the EP shape kappa is explored; one run is
+selected via acceptance window, posterior predictive agreement, and (when available)
+closeness to GLM coefficient ratios relative to a reference predictor.
 }
 \details{
-\strong{Design encoding.} Predictors in \code{X} are expanded with
-\code{model.matrix(~ ., data = X)} (intercept dropped for slopes). Numeric columns remain
-one column each. Factor columns are expanded to treatment-contrast dummies (baseline is
-the first level). The RW–MH is run on the \emph{standardized} encoded design (z-scored
-columns). Optionally, coefficients can be back-transformed to the original (unscaled)
-encoded columns via \code{transform_back = "logit"|"SAS"|"Long"}.
-
-\strong{Standardization & back-transforms.} The sampler runs on z-scored encoded columns.
-\code{Scaled} slopes are posterior means on this working scale. Let \eqn{s_x} be the SD of the
-unscaled encoded column: \code{logit} back-transform uses \eqn{\beta^{\mathrm{std}}/s_x};
-\code{SAS} and \code{Long} multiply the \code{logit} transform by \eqn{\pi/\sqrt{3}} and \eqn{\pi/\sqrt{3}+1}
-respectively.
-
-\strong{Reference predictor & ratios.} The ratio denominator is chosen from the original
-\code{X} columns (highest DISCO severity by default). If that predictor is a factor,
-the denominator is the \emph{first} dummy column generated for that factor by
-\code{model.matrix()}. GLM ratios are computed on the standardized encoded design.
-
-\strong{Shared missing handling.} The \code{missing} choice governs a single preprocessing
-step applied to \verb{(y, X)}. With \code{missing = "complete"} we drop rows with any NA in
-\code{y} or \code{X}. With \code{missing = "impute"} we drop rows with NA in \code{y} and impute
-NAs in \code{X} using \code{impute_args}. The same processed data are then used for both the
-MEP fit and the DISCO severities (we call \code{DISCO::uni_separation(..., missing = "complete")}
-because the data are already prepared). \strong{Numeric predictors are z-scored when computing
-DISCO severities} (factors unchanged) to align the anchoring scale with the modeling scale.
-}
-\section{What this function does}{
-
-\itemize{
-\item Applies a single missing-data policy to \verb{(y, X)} \strong{once} (complete-case or external imputation).
-\item For each \emph{original} predictor in \code{X}, computes a univariate \strong{severity}
-using \code{DISCO::uni_separation()} on the same rows used for modeling.
-Numeric predictors are \strong{z-scored for the severity computation} (factors unchanged).
-\item Maps severity \eqn{s \in [0,1]} to an anchor slope prior scale \eqn{\sigma_j(s)}
-and an anchor \eqn{\kappa_j(s)}; the intercept uses a wide prior.
-\item Builds a small grid: intercept mean offsets, global multipliers on the \eqn{\sigma_j},
-and \eqn{\kappa} around the anchor average; runs RW–MH for each grid point.
-\item Selects one run using a score favoring acceptance in a target window, high posterior
-predictive agreement, and closeness of standardized slope ratios to \strong{GLM} ratios
-(with a single \emph{reference} denominator).
-}
-}
-
-\section{Factor handling & column names}{
-
-\itemize{
-\item \strong{Numeric predictors} appear as a single column with their original name
-(e.g., \code{X3}). No suffixes are added.
-\item \strong{Factor predictors} are expanded by \code{model.matrix()} using treatment
-contrasts with the \emph{first level as the baseline}. For a two-level factor
-\code{X3} with levels \code{A} and \code{B} (baseline = \code{A}), the encoded
-design includes a single dummy column \code{X3B}, which equals 1 when
-\code{X3 == "B"} and 0 when \code{X3 == "A"}. The coefficient for \code{X3B}
-is the log-odds difference \emph{B vs A} (controlling for other predictors).
-\item The output \code{posterior$effects$Predictor} uses these encoded names: numeric
-predictors as \code{"Xk"}; factor dummies as \code{"FactorLevel"} (e.g., \code{X3B}).
-\item \strong{Change the baseline} beforehand to alter dummy labels:
-\preformatted{X$X3 <- stats::relevel(X$X3, ref = "B")  # baseline becomes B; dummy shows as X3A}
-\item If you truly intend to \emph{treat a factor as numeric}, convert it yourself:
-\preformatted{X$X3 <- as.numeric(X$X3)  # no dummy expansion; column remains 'X3'}
-}
-}
-
-\examples{
-\donttest{
-## Toy data with one numeric factor and one 2-level factor
-y <- c(0,0,0,0, 1,1,1,1)
-X_toy <- data.frame(
-  X1 = c(-1.86, -0.81,  1.32, -0.40,  0.91,  2.49,  0.34,  0.25),
-  X2 = c( 0.52,  -0.07,  0.60,  0.67, -1.39,  0.16, -1.40, -0.09),
-  X3 = factor(c(rep("A", 4), rep("B", 4)))
-)
-
-## 0) Univariate DISCO diagnostics (complete-case)
-d3 <- DISCO::uni_separation(data.frame(y=y, X3=X_toy$X3), "X3", "y", "complete")
-d1 <- DISCO::uni_separation(data.frame(y=y, X1=X_toy$X1), "X1", "y", "complete")
-d2 <- DISCO::uni_separation(data.frame(y=y, X2=X_toy$X2), "X2", "y", "complete")
-d3$separation_type; d1$separation_type; d2$separation_type
-
-## 1) Standardized-only coefficients (includes CIs for Scaled slopes)
-fit_std <- MEP_mixture(
-  y, X_toy,
-  n_iter = 4000, burn_in = 1000, seed = 42,
-  transform_back = "none", ci_level = 0.95
-)
-head(fit_std$posterior$effects)
-# Columns: Predictor, Scaled, Scaled_CI_low, Scaled_CI_high
-
-## 2) Back-transform to LOGIT (per-encoded-unit effect) with CIs
-fit_logit <- MEP_mixture(
-  y, X_toy,
-  n_iter = 4000, burn_in = 1000, seed = 42,
-  transform_back = "logit"
-)
-subset(fit_logit$posterior$effects,
-       select = c("Predictor","b_logit_original","b_logit_CI_low","b_logit_CI_high"))
-
-## 3) Alternative effect scales with CIs (choose ONE per run)
-fit_sas <- MEP_mixture(
-  y, X_toy,
-  n_iter = 4000, burn_in = 1000, seed = 42,
-  transform_back = "SAS"
-)
-fit_long <- MEP_mixture(
-  y, X_toy,
-  n_iter = 4000, burn_in = 1000, seed = 42,
-  transform_back = "Long"
-)
-subset(fit_sas$posterior$effects,
-       select = c("Predictor","b_SAS_original","b_SAS_CI_low","b_SAS_CI_high"))
-subset(fit_long$posterior$effects,
-       select = c("Predictor","b_Long_original","b_Long_CI_low","b_Long_CI_high"))
-
-## 4) Change baseline level to rename the dummy (now "X3A" = A vs B)
-X_toy2 <- X_toy
-X_toy2$X3 <- stats::relevel(X_toy2$X3, ref = "B")
-fit_base <- MEP_mixture(
-  y, X_toy2,
-  n_iter = 3000, burn_in = 800, seed = 7,
-  transform_back = "logit"
-)
-head(fit_base$posterior$effects)   # dummy appears as "X3A"
-
-## 5) Shared missing handling
-X_miss <- X_toy
-X_miss$X1[c(2,6)] <- NA      # numeric NA
-X_miss$X3[7]      <- NA      # factor NA
-
-# (a) complete-case: drops rows with any NA in X
-fit_cc <- MEP_mixture(
-  y, X_miss,
-  missing = "complete",
-  n_iter = 3000, burn_in = 800, seed = 9, transform_back = "Long"
-)
-head(fit_cc$posterior$effects)
-
-# (b) impute: imputes X (numeric=median; factor=mode by default),
-#     then uses the same imputed data for DISCO + model
-fit_im <- MEP_mixture(
-  y, X_miss,
-  missing = "impute",
-  impute_args = list(numeric_method = "median"),
-  n_iter = 3000, burn_in = 800, seed = 9, transform_back = "logit"
-)
-head(fit_im$posterior$effects)
-
-## 6) Inspect selection & ratios
-fit <- fit_logit
-fit$severity
-head(fit$grid_summary)
-fit$best
-}
-
-## 7) Rerun the selected best grid point with multiple chains
-fit_multi <- MEP_mixture(
-  y, X_toy,
-  n_iter = 4000, burn_in = 1000,
-  n_chains_best = 4,
-  chain_seeds_best = c(101, 102, 103, 104),
-  combine_chains = "stack",
-  transform_back = "none",
-  seed = 9
-)
-fit_multi$diagnostics_multi
-head(fit_multi$posterior$effects)
-}
-\seealso{
-\code{DISCO::uni_separation}, \code{DISCO::latent_separation}
+Design encoding. Predictors in X are expanded with model.matrix(~ ., data = X)
+(intercept dropped for slopes). Numeric columns remain one column each. Factor columns
+are expanded to treatment-contrast dummies (baseline is the first level). The RW-MH is
+run on the standardized encoded design (z-scored columns). Optionally, coefficients can
+be back-transformed to the original (unscaled) encoded columns via
+transform_back = "logit"|"SAS"|"Long".
 }

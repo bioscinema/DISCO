@@ -435,6 +435,13 @@ EP_univariable <- function(
     accept <- 0L
     ss <- step_size
 
+    # record burn-in tuning checkpoints
+    tune_pts <- if (burn_in >= tune_interval && tune_interval > 0) floor(burn_in / tune_interval) else 0L
+    ss_trace <- if (tune_pts > 0L) numeric(tune_pts) else numeric(0)
+    it_trace <- if (tune_pts > 0L) integer(tune_pts) else integer(0)
+    ar_trace <- if (tune_pts > 0L) numeric(tune_pts) else numeric(0)
+    idx_t <- 0L
+
     for (t in 2:n_iter) {
       prop <- chain[t - 1, ] + ss * rnorm(2)
       prop_lp <- log_post(prop)
@@ -446,15 +453,32 @@ EP_univariable <- function(
         chain[t, ] <- chain[t - 1, ]
       }
 
-      if (t <= burn_in && (t %% tune_interval) == 0) {
-        acc <- accept / t
-        if (acc > tune_hi) ss <- ss * 1.10
-        if (acc < tune_lo) ss <- ss * 0.90
+      if (t <= burn_in && tune_interval > 0 && (t %% tune_interval) == 0) {
+        ar <- accept / t
+        if (ar > tune_hi) ss <- ss * 1.10
+        if (ar < tune_lo) ss <- ss * 0.90
+
+        idx_t <- idx_t + 1L
+        if (idx_t <= length(ss_trace)) {
+          it_trace[idx_t] <- t
+          ar_trace[idx_t] <- ar
+          ss_trace[idx_t] <- ss
+        }
       }
     }
 
     post <- chain[(burn_in + 1):n_iter, , drop = FALSE]
-    list(post = post, acceptance_rate = accept / (n_iter - 1), step_size_final = ss)
+    list(
+      post = post,
+      acceptance_rate = accept / (n_iter - 1),
+      step_size_final = ss,
+      burnin_step_trace = data.frame(
+        iter = it_trace,
+        acceptance = ar_trace,
+        step_size = ss_trace,
+        row.names = NULL
+      )
+    )
   }
 
   chains <- vector("list", n_chains)
@@ -488,7 +512,6 @@ EP_univariable <- function(
     mlist <- coda::mcmc.list(lapply(chains, function(z) coda::mcmc(z$post)))
 
     gd <- coda::gelman.diag(mlist, autoburnin = FALSE, multivariate = FALSE)$psrf
-    # gd is a matrix with rows = params, columns include "Point est."
     rhat <- as.numeric(gd[, "Point est."])
     names(rhat) <- colnames(chains[[1]]$post)
 
@@ -558,7 +581,6 @@ EP_univariable <- function(
     )
   }
 
-  # standardized params table
   tab_std <- summarize_draws(post_std, ci_level)
   posterior <- data.frame(
     Param = c("beta0", "beta1"),
@@ -567,7 +589,6 @@ EP_univariable <- function(
     check.names = FALSE
   )
 
-  # optional original-scale rows
   if (transform_beta1 != "none") {
     tab_b0 <- summarize_draws(matrix(post_orig[, "beta0_orig"], ncol = 1), ci_level)
     row_b0 <- data.frame(Param = "beta0_orig", tab_b0, row.names = NULL, check.names = FALSE)
@@ -623,6 +644,7 @@ EP_univariable <- function(
   mcmc_info <- list(
     acceptance_rate_by_chain = vapply(chains, function(z) z$acceptance_rate, numeric(1)),
     step_size_final_by_chain = vapply(chains, function(z) z$step_size_final, numeric(1)),
+    burnin_step_trace_by_chain = lapply(chains, `[[`, "burnin_step_trace"),
     n_iter = n_iter,
     burn_in = burn_in,
     n_chains = n_chains,
