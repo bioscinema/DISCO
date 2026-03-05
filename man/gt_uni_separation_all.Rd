@@ -2,7 +2,7 @@
 % Please edit documentation in R/gt-tables.R
 \name{gt_uni_separation_all}
 \alias{gt_uni_separation_all}
-\title{GT table: univariate separation across all predictors}
+\title{GT table: univariate separation across all predictors (missing-handling columns removed)}
 \usage{
 gt_uni_separation_all(
   data,
@@ -36,8 +36,7 @@ uses all columns except \code{outcome}.}
 
 \item{digits}{Number formatting for numeric columns (default 3).}
 
-\item{show_rows_used}{If TRUE, preview row indices (unless all rows are used,
-in which case the full 1..N is shown automatically).}
+\item{show_rows_used}{If TRUE, preview row indices (unless all rows are used)}
 
 \item{title, subtitle}{Title/subtitle for the table.}
 }

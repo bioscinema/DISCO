@@ -77,7 +77,20 @@ gt_uni_separation_all(df_toy, outcome = "Y")
 
 ![Univariate DISCO table](man/figures/readme-uni-gt-all.png)
 
-> This table summarizes univariate screen results of each predictor against the outcome (`Y`) using **complete-case** data. It flags whether any single predictor causes separation in a logistic model. See the README earlier version for column definitions: Separation Index, Severity, Boundary Threshold, Single-Tie Boundary, Tie Count, Missing-Data Handling block, Separation label, and Rows Used (Original Indices).
+> This table summarizes univariate screen results of each predictor against the outcome (`Y`). It flags whether any single predictor causes separation in a logistic model.
+
+**Column guide**
+
+- **Predictor**: Predictor being screened (one at a time).
+- **Outcome**: Binary outcome used for screening.
+- **Separation Index**: Rand index between the observed outcome labels and the best aligned 2-group split induced by the predictor. Values closer to 1 indicate stronger separability.
+- **Severity**: Continuous score in \[0,1\] summarizing the strength of the separation signal after accounting for boundary ties. Higher means more severe.
+- **Boundary Threshold**: Non-negative tie-adjusted threshold used to guard against boundary artifacts. Quasi separation is only called when `Separation Index > Boundary Threshold`.
+- **Single-Tie Boundary**: Whether there is exactly one shared predictor value between classes that lies on the separating boundary.
+- **Tie Count**: Number of rows that take the boundary tie value (only relevant when `Single-Tie Boundary = Yes`).
+- **Separation**: Final label for the predictor (for example `Perfect Separation`, `Quasi-Complete Separation`, or `No Problem`).
+- **Rows Used (Original Indices)**: Original row indices retained for this test, so results are fully traceable to the input data.
+
 
 ### Latent Separation
 
@@ -108,6 +121,19 @@ gt_latent_separation(res_lat_com, title = "Latent Minimal Subsets - Forward")
 
 ```
 ![Latent DISCO table](man/figures/readme-latent-gt-forward.png)
+
+> This table summarizes multivariate (latent) separation results from `latent_separation (find_minimal = TRUE)`. Each row is a separating subset found by the chosen search strategy (here, forward).
+
+**Column guide**
+
+- **Subset**: Internal name for the subset (typically predictor names joined by underscores).
+- **Variables**: Predictor names included in the subset.
+- **# Of Predictors**: Subset size \(k\).
+- **K_relax**: Severity lower bound from the LP relaxation. Smaller values indicate more severe separation. `0` corresponds to perfect separation.
+- **Score**: Severity score in \[0,1\], computed as `1 - (K_relax / n)`. Larger values indicate more severe separation.
+- **n In LP**: Number of rows used in the LP for this subset.
+- **Separation**: Final label for the subset (for example `Perfect Separation`).
+- **Rows Used (Original Indices)**: Original row indices retained for this subset test, so results are fully traceable.
 
 #### Backward Diagnosis (recommended for large p)
 

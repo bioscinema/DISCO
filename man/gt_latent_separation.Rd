@@ -2,13 +2,13 @@
 % Please edit documentation in R/gt-tables.R
 \name{gt_latent_separation}
 \alias{gt_latent_separation}
-\title{Create a gt table for latent results}
+\title{Create a gt table for latent results (missing-handling columns removed)}
 \usage{
 gt_latent_separation(
   res,
   title = "Latent Separation: Minimal Subsets",
   subtitle = NULL,
-  sort_by = c("type_order", "K_relax_per_n", "k", "n_used"),
+  sort_by = c("type_order", "K_relax_per_n", "k", "n"),
   show_rows_used = FALSE,
   digits = 3
 )
@@ -23,5 +23,5 @@ gt_latent_separation(
 \item{show_rows_used}{If TRUE, show preview of row indices per subset}
 }
 \description{
-Create a gt table for latent results
+Create a gt table for latent results (missing-handling columns removed)
 }

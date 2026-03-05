@@ -2,7 +2,7 @@
 % Please edit documentation in R/gt-tables.R
 \name{gt_uni_separation}
 \alias{gt_uni_separation}
-\title{Create a gt table for a univariate result (no overlap column)}
+\title{Create a gt table for a univariate result (missing-handling columns removed)}
 \usage{
 gt_uni_separation(
   res,
@@ -19,8 +19,8 @@ gt_uni_separation(
 
 \item{digits}{Numeric formatting decimals}
 
-\item{show_rows_used}{If TRUE, show a preview of row indices}
+\item{show_rows_used}{If TRUE, show a preview of row indices (unless all rows are used)}
 }
 \description{
-Create a gt table for a univariate result (no overlap column)
+Create a gt table for a univariate result (missing-handling columns removed)
 }
