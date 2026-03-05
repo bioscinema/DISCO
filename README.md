@@ -44,34 +44,21 @@ devtools::install_github("bioscinema/DISCO")
 library(DISCO)
 ```
 
+> Recommendation: Provide complete-case data to all functions. Missingness is assumed to have been handled upstream.
+
 ---
 
 ## Separation Diagnosis
 
 ```r
 set.seed(2025)
-df_miss <- data.frame(
-  Y    = c(0,0,0,0,0,1,1,1,1, 0,1, NA, 1),
-  X1   = c(6.1,0.5, 1.0, NA, 2.0, 5.0, 6.0, 7.0, NA, 1.5, 8.0, 9.0, 6.5),
-  X2   = c(4,10, 9, 8, NA, 6, 5, NA, 3, 2, 1, 0, NA),
-  Race = factor(c("C","A","A","B", NA, "C","C","B","A","B", NA, "C","A")),
-  L1   = c(TRUE,TRUE, NA, FALSE, TRUE, TRUE, NA, FALSE, TRUE, FALSE, TRUE, TRUE, NA)
+df_toy <- data.frame(
+  Y    = c(0,0,1,0),
+  X1   = c(6.1,0.5, 5.0, 1.5),
+  X2   = c(4,10, 6,2),
+  Race = factor(c("C","A","C","B")),
+  L1   = c(TRUE,TRUE, TRUE, FALSE)
 )
-
-# Complete-case
-res_cc <- uni_separation(df_miss, "X1", "Y", missing = "complete")
-res_cc
-
-# Impute (defaults = numeric median, categorical mode, logical mode)
-res_imp <- uni_separation(df_miss, "X1", "Y", missing = "impute")
-res_imp
-
-# Treat NA as a level for categorical predictors
-res_cat <- uni_separation(
-  df_miss, "Race", "Y", missing = "impute",
-  impute_args = list(categorical_method = "missing")
-)
-res_cat
 ```
 
 ### Univairate Separation
@@ -81,11 +68,11 @@ res_cat
 library(gt)
 
 # One predictor
-res_uni_cc <- uni_separation(df_miss, "X1", "Y", missing = "complete")
+res_uni_cc <- uni_separation(df_toy, "X1", "Y")
 gt_uni_separation(res_uni_cc, title = "Univariate (X1 vs Y) — Complete-case")
 
 # All predictors vs outcome (one-shot summary)
-gt_uni_separation_all(df_miss, outcome = "Y", missing = "complete")
+gt_uni_separation_all(df_toy, outcome = "Y")
 ```
 
 ![Univariate DISCO table](man/figures/readme-uni-gt-all.png)
@@ -111,11 +98,9 @@ gt_uni_separation_all(df_miss, outcome = "Y", missing = "complete")
 #### Forward Diagnosis (recommend for small p)
 ```r
 res_lat_com <- latent_separation(
-  y = df_miss$Y,
-  X = df_miss[, c("X1","X2","Race","L1")],
+  y = df_toy$Y,
+  X = df_toy[, c("X1","X2","Race","L1")],
   find_minimal = TRUE,
-  missing = "complete",
-  missing_scope = "global", # sample size to be fixed across all subset tests
   minimal_strategy = "forward",
   verbose = TRUE
 )
@@ -130,11 +115,9 @@ Greedy backward returns one locally minimal separating set quickly.
 
 ```r
 res_lat_com <- latent_separation(
-  y = df_miss$Y,
-  X = df_miss[, c("X1","X2","Race","L1")],
+  y = df_toy$Y,
+  X = df_toy[, c("X1","X2","Race","L1")],
   find_minimal = TRUE,
-  missing = "complete",
-  missing_scope = "global",
   minimal_strategy = "backward",
   verbose = TRUE
 )
@@ -147,11 +130,9 @@ If `backward_exhaustive = TRUE`, the algorithm enumerates subsets (from larger t
 
 ```r
 res_lat_com <- latent_separation(
-  y = df_miss$Y,
-  X = df_miss[, c("X1","X2","Race","L1")],
+  y = df_toy$Y,
+  X = df_toy[, c("X1","X2","Race","L1")],
   find_minimal = TRUE,
-  missing = "complete",
-  missing_scope = "global",
   minimal_strategy = "backward",
   backward_exhaustive = TRUE,
   verbose = TRUE
@@ -394,14 +375,7 @@ fit_multi$posterior$effects
 ```r
 # Univariate Detection
 uni_separation(
-  data, predictor, outcome = "Y",
-  missing = c("complete","impute"),
-  impute_args = list(
-    numeric_method     = c("median","mean"),
-    categorical_method = c("mode","missing"),
-    logical_method     = c("mode","missing"),
-    custom_fn          = NULL
-  )
+  data, predictor, outcome = "Y"
 )
 
 latent_separation(
@@ -411,9 +385,6 @@ latent_separation(
   min_vars = 2, max_vars = NULL,
   mode = c("either","perfect","quasi"),
   stop_at_first = FALSE,
-  missing = c("complete","impute"),
-  missing_scope = c("global","subset"),
-  impute_args = list(...),
   minimal_strategy = c("auto","forward","backward"),
   small_p_threshold = 15,
   backward_exhaustive = FALSE,

@@ -20,8 +20,10 @@ uni_separation(
 \item{outcome}{Name of the binary outcome column (string, default "Y").}
 
 \item{missing}{How to handle missing data for the tested variables.
-One of \code{"complete"} (drop rows with NA in \code{predictor} or \code{outcome}) or
-\code{"impute"} (impute the predictor only; outcome NA is always dropped).}
+\code{"complete"} (recommended) drops rows with NA in \code{predictor} or \code{outcome}.
+\code{"impute"} imputes the predictor only; outcome NA is always dropped.
+Imputation is intended as a sensitivity analysis because it can create
+or mask separation artifacts.}
 
 \item{impute_args}{Optional list of imputation settings when
 \code{missing = "impute"}. Recognized keys:

@@ -11,8 +11,10 @@
 #' @param predictor Name of the predictor column (string).
 #' @param outcome Name of the binary outcome column (string, default "Y").
 #' @param missing How to handle missing data for the tested variables.
-#'   One of `"complete"` (drop rows with NA in `predictor` or `outcome`) or
-#'   `"impute"` (impute the predictor only; outcome NA is always dropped).
+#'   `"complete"` (recommended) drops rows with NA in `predictor` or `outcome`.
+#'   `"impute"` imputes the predictor only; outcome NA is always dropped.
+#'   Imputation is intended as a sensitivity analysis because it can create
+#'   or mask separation artifacts.
 #' @param impute_args Optional list of imputation settings when
 #'   `missing = "impute"`. Recognized keys:
 #'   \itemize{
@@ -67,14 +69,24 @@ uni_separation <- function(
     stop(sprintf("Outcome column '%s' not found.", outcome), call. = FALSE)
   }
 
+  if (missing == "impute") {
+    warning(
+      "uni_separation(): missing = \"impute\" imputes the predictor only. ",
+      "For separation diagnosis, missing = \"complete\" is recommended; ",
+      "treat imputation results as sensitivity analysis.",
+      call. = FALSE
+    )
+  }
+
   # Slice only what's needed (preserve original row indexing)
-  df   <- data[, c(predictor, outcome), drop = FALSE]
-  y0   <- df[[outcome]]
-  X0   <- df[predictor]
+  df <- data[, c(predictor, outcome), drop = FALSE]
+  y0 <- df[[outcome]]
+  X0 <- df[predictor]  # keep as 1-col data.frame for missing handler consistency
 
   # Handle missing data per user choice (never impute outcome)
   mh <- .handle_missing_for_subset(
-    y = y0, X = X0,
+    y = y0,
+    X = X0,
     method = missing,
     impute_args = impute_args
   )
@@ -87,7 +99,8 @@ uni_separation <- function(
   if (is.numeric(x_raw)) {
     x <- x_raw
   } else {
-    ux <- unique(x_raw); k <- length(ux)
+    ux <- unique(x_raw)
+    k <- length(ux)
     if (is.logical(x_raw) || k == 2L) {
       x <- as.integer(factor(x_raw, levels = sort(ux))) - 1L
     } else {
@@ -99,9 +112,19 @@ uni_separation <- function(
   # Early exits after missing handling
   if (length(unique(y)) == 1L) {
     return(list(
-      predictor = predictor, outcome = outcome,
+      predictor = predictor,
+      outcome = outcome,
       separation_type = "Constant outcome",
-      message = sprintf("All outcomes %s = %s after missing-data handling.", outcome, unique(y)),
+      separation_index = NA_real_,
+      severity_score = NA_real_,
+      rand_details = NULL,
+      single_tie_boundary = NA,
+      tie_rows_boundary = NA_integer_,
+      boundary_threshold = NA_real_,
+      message = sprintf(
+        "All outcomes %s = %s after missing-data handling.",
+        outcome, paste(unique(y), collapse = ", ")
+      ),
       missing_info = list(
         method = mh$params_used$method,
         params = mh$params_used,
@@ -112,9 +135,19 @@ uni_separation <- function(
   }
   if (length(unique(x)) == 1L) {
     return(list(
-      predictor = predictor, outcome = outcome,
+      predictor = predictor,
+      outcome = outcome,
       separation_type = "Constant predictor",
-      message = sprintf("All %s = %s after missing-data handling.", predictor, unique(x)),
+      separation_index = NA_real_,
+      severity_score = NA_real_,
+      rand_details = NULL,
+      single_tie_boundary = NA,
+      tie_rows_boundary = NA_integer_,
+      boundary_threshold = NA_real_,
+      message = sprintf(
+        "All %s = %s after missing-data handling.",
+        predictor, paste(unique(x), collapse = ", ")
+      ),
       missing_info = list(
         method = mh$params_used$method,
         params = mh$params_used,
@@ -130,34 +163,36 @@ uni_separation <- function(
 
   # Sort by predictor and build initial clusters
   ord_idx <- order(x)
-  y_ord   <- y[ord_idx]
-  n       <- length(y_ord)
-  n0      <- sum(y_ord == 0L)
+  y_ord <- y[ord_idx]
+  n <- length(y_ord)
+  n0 <- sum(y_ord == 0L)
   initial_clusters <- c(rep(1L, n0), rep(2L, n - n0))
 
   cm <- table(factor(y_ord, levels = 0:1), factor(initial_clusters, levels = 1:2))
   cost_mat <- max(cm) - cm
-  opt_map  <- clue::solve_LSAP(cost_mat)
-  preds    <- as.vector(opt_map[initial_clusters] - 1L)
+  opt_map <- clue::solve_LSAP(cost_mat)
+  preds <- as.vector(opt_map[initial_clusters] - 1L)
 
-  ri      <- rand_index(y_ord, preds)
+  ri <- rand_index(y_ord, preds)
   sep_idx <- ri$rand_index
 
   X0u <- sort(unique(x[idx0]))
   X1u <- sort(unique(x[idx1]))
   shared <- intersect(X0u, X1u)
 
-  eps <- 1e-8 # avoid issue from floating point precision
-  single_tie <- length(shared) == 1L && (
-    (all(X0u <= shared + eps) && all(X1u >= shared - eps)) ||
-      (all(X0u >= shared - eps) && all(X1u <= shared + eps))
-  )
-  tie_count <- if (isTRUE(single_tie)) sum(abs(x - shared) < eps) else 0L
+  eps_tie <- 1e-8
+  tol_perfect <- 1e-12
 
-  raw_thresh      <- 1 - (2 * tie_count / n)
+  single_tie <- length(shared) == 1L && (
+    (all(X0u <= shared + eps_tie) && all(X1u >= shared - eps_tie)) ||
+      (all(X0u >= shared - eps_tie) && all(X1u <= shared + eps_tie))
+  )
+  tie_count <- if (isTRUE(single_tie)) sum(abs(x - shared) < eps_tie) else 0L
+
+  raw_thresh <- 1 - (2 * tie_count / n)
   boundary_thresh <- max(raw_thresh, 0)
 
-  is_perfect <- isTRUE(!is.na(sep_idx)) && identical(sep_idx, 1) && !single_tie
+  is_perfect <- !is.na(sep_idx) && (sep_idx >= 1 - tol_perfect) && !single_tie
   sep_type <- if (isTRUE(is_perfect)) {
     "Perfect separation"
   } else if (!is.na(sep_idx) && sep_idx > boundary_thresh) {
@@ -169,16 +204,16 @@ uni_separation <- function(
   sev_score <- severity_scale(sep_idx, boundary_thresh, tie_count, n, is_perfect)
 
   out <- list(
-    predictor           = predictor,
-    outcome             = outcome,
-    separation_type     = sep_type,
-    separation_index    = round(sep_idx, 3),
-    severity_score      = round(sev_score, 3),
-    rand_details        = ri,
+    predictor = predictor,
+    outcome = outcome,
+    separation_type = sep_type,
+    separation_index = sep_idx,
+    severity_score = sev_score,
+    rand_details = ri,
     single_tie_boundary = single_tie,
-    tie_rows_boundary   = tie_count,
-    boundary_threshold  = round(boundary_thresh, 3),
-    missing_info        = list(
+    tie_rows_boundary = tie_count,
+    boundary_threshold = boundary_thresh,
+    missing_info = list(
       method = mh$params_used$method,
       params = mh$params_used,
       rows_used = mh$rows_used,
@@ -192,11 +227,13 @@ uni_separation <- function(
 
 #' @export
 print.uni_separation <- function(x, digits = 3, ...) {
-  fmt <- function(z) sprintf("%.*f", digits, z)
+  fmt <- function(z) {
+    if (is.na(z)) return("NA")
+    sprintf("%.*f", digits, z)
+  }
 
   cat("Univariate separation for", x$predictor, "vs", x$outcome, "\n")
 
-  # For constant outcome/predictor early exits
   if (!is.null(x$message)) {
     cat("  ", x$message, "\n", sep = "")
     return(invisible(x))
