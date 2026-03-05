@@ -12,6 +12,9 @@ When predictors **perfectly** (or quasi-completely) split the outcome, logistic 
 
 ## Overview
 
+![Overview](man/figures/Workflow.jpeg)
+
+
 ### Separation Diagnosis
 - `uni_separation()` — univariate detector using:
   - Hungarian matching to align clusters,
@@ -25,7 +28,7 @@ When predictors **perfectly** (or quasi-completely) split the outcome, logistic 
   - choose subset-search strategy: forward enumeration or backward.
 
 ### Estimation (Bayesian)
-- `EP_univariable()` — DISCO-severity-adaptive **univariate** logistic regression with an **MEP** prior; shared missing handling (applied once), standardized X for **severity & fit**, optional back-transforms (logit / SAS / Long), and a GLM comparator on standardized X.
+- `MEP_Univariate()` — DISCO-severity-adaptive **univariate** logistic regression with an **MEP** prior; shared missing handling (applied once), standardized X for **severity & fit**, optional back-transforms (logit / SAS / Long), and a GLM comparator on standardized X.
 - `MEP_latent()` — **unified latent** (numeric **+ factor** support via `model.matrix`): handles missingness **once** on raw `y, X`, encodes factors (treatment; baseline = first level), **safe-scales encoded columns**, runs a small grid over \((\mu, \sigma_{\text{global}}, \kappa)\), and selects one run via acceptance-window + GLM-ratio closeness + posterior predictive agreement. Reports working-scale summaries **with CIs** and back-transformed **b_A / b_SAS / b_Long** **(per encoded column)** with CIs.
 - `MEP_mixture()` — **severity-anchored multi-predictor** logistic with **numeric + factor** predictors. Encodes factors via `model.matrix(~ ., data = X)`, anchors slope prior scales by **per-predictor DISCO severities** (numeric severities computed on z-scores; factors unchanged for severity step), runs a small grid (intercept mean offsets, global slope multipliers, κ), and selects one run via acceptance window + checks. Reports posterior **means** on the standardized scale and optional back-transformed **A / SAS / Long** **means** per encoded column.
 
@@ -103,10 +106,25 @@ gt_latent_separation(res_lat_com, title = "Latent Minimal Subsets - Forward")
 ```
 ![Latent DISCO table](man/figures/readme-latent-gt-forward.png)
 
-#### Backward Diagnosis, recommend for large p
+#### Backward Diagnosis, recommend for large p to find one locally minimal separating set quickly.
 
 ```r
+res_lat_com <- latent_separation(
+  y = df_miss$Y,
+  X = df_miss[, c("X1","X2","Race","L1")],
+  find_minimal = TRUE,
+  missing = "complete",
+  missing_scope = "global",
+  minimal_strategy = "backward"
+)
+gt_latent_separation(res_lat_com, title = "Latent Minimal Subsets - Backward Quick Search")
+```
+![Latent DISCO table](man/figures/readme-latent-gt-backward-quick.png)
 
+
+If `backward_exhaustive = TRUE`, the algorithm enumerates subsets (from larger to smaller) to determine the smallest subset size that still produces a hit, then returns all hits at that minimal size (or only the first hit when `stop_at_first = TRUE`). This option can become prohibitively expensive as `p` increases.
+
+```r
 res_lat_com <- latent_separation(
   y = df_miss$Y,
   X = df_miss[, c("X1","X2","Race","L1")],
@@ -117,94 +135,71 @@ res_lat_com <- latent_separation(
   backward_exhaustive = TRUE
 )
 gt_latent_separation(res_lat_com, title = "Latent Minimal Subsets - Backward")
-
-
-
 ```
 ![Latent DISCO table](man/figures/readme-latent-gt-backward.png)
 
 
 ---
 
-## Univariate Issue — `EP_univariable`
+## Univariate Issue — `MEP_Univariate`
 
-`EP_univariable()` fits **intercept + one predictor** logistic regression with a **severity-adaptive MEP prior** informed by `uni_separation()`. It uses a random-walk MH sampler with light auto-tuning.
+`MEP_Univariate()` fits **intercept + one predictor** logistic regression with a **severity-adaptive MEP prior** informed by `uni_separation()`. It uses a random-walk MH sampler with light auto-tuning.
 
-**Shared missing handling (applied once).** We apply `missing` to `(outcome, predictor)` **once**, then use those rows/values for both the DISCO severity and the model fit. For the DISCO call we pass `missing = "complete"` because the data are already prepared. Numeric predictors are z-scored for severity, GLM comparator, and the Bayesian fit; 2-level factors are converted to 0/1 for estimation/comparator (error if >2 levels).
+Numeric predictors are z-scored for severity, GLM comparator, and the Bayesian fit; 2-level factors are converted to 0/1 for estimation/comparator (error if >2 levels).
 
 **Defaults (match SLURM script):**
-- `n_iter = 20000`, `burn_in = 5000`
+-`burn_in = 5000`, `n_iter = 15000` 
 - Proposal s.d. blend: `step = 0.30*(1-severity) + 0.12*severity`
 - Prior scales: `sigma0 = 10`, `sigma1_hi = 5`, `sigma1_lo = 0.15`
 - Shape blend: `kappa = 1 + severity*(2.5 - 1)`
 - `ci_level = 0.95`, MH auto-tuning during burn-in (`tune_threshold_hi = 0.45`, `tune_threshold_lo = 0.20`, `tune_interval = 500`)
 - `compare = TRUE` fits a GLM comparator on standardized X
 
-**Output**
-- `posterior`: summaries for **standardized** `beta0`, `beta1`; if `transform_beta1 ∈ {logit, SAS, Long}`, also includes `beta0_orig` and the corresponding slope (`beta1_logit` / `beta1_SAS` / `beta1_Long`) on the **original predictor** scale.
+### Output
+- `posterior`: summaries for **standardized** `beta1` only. If `transform_beta1 ∈ {logit, SAS, Long}`, also includes the corresponding slope on the original predictor scale (`beta1_logit` or `beta1_SAS` or `beta1_Long`).
 - `disco`: severity metadata (`separation_type`, `severity_score`, `boundary_threshold`, `single_tie_boundary`, `missing_info` including `rows_used`).
-- `prior`, `mcmc` diagnostics, `comparators$glm` (coefficients on standardized X), `rows_used`. If `return_draws = TRUE`, returns `draws$chain_std` / `draws$chain_orig`.
+- `prior`, `mcmc` (including burn-in step-size trace), `comparators$glm` (coefficients on standardized X), `rows_used`.
+- If `return_draws = TRUE`, returns `draws$chain_std` and `draws$chain_orig`.
+
+### Reproducibility
+For reproducible chains, pass explicit `chain_seeds`. If `chain_seeds` is `NULL`, random seeds are generated.
 
 ### Quick start
 
 ```r
-set.seed(1)
-n  <- 60
-x  <- rnorm(n, mean = 0.3, sd = 1)
-eta <- -0.2 + 1.0 * x
-y  <- rbinom(n, size = 1, prob = plogis(eta))
+y <- c(0,0,0,0, 1,1,1,1)
+x <- c(-0.52, -0.07, -0.60, -0.67, 1.39, 0.16, 1.40, 0.09)
 df <- data.frame(y = y, x = x)
 
-# (1) Default: STANDARDIZED beta0, beta1
-fit_std <- EP_univariable(df, predictor = "x", outcome = "y",
-                          n_iter = 6000, burn_in = 2000, seed = 42)
+detect <- DISCO::uni_separation(df, predictor = "x", outcome = "y")
+detect$separation_type # e.g., "Perfect separation"
+
+## 1) Default: STANDARDIZED coefficients for predictor
+fit_std <- MEP_Univariate(
+  data = df, predictor = "x", outcome = "y"
+)
 fit_std$posterior
+fit_logit$diagnostics_single
 
-# (2) Back-transform slope to ORIGINAL-x units on LOGIT scale
-fit_logit <- EP_univariable(df, "x", "y",
-                            transform_beta1 = "logit",
-                            n_iter = 6000, burn_in = 2000, seed = 42)
+## 2) Back-transform slope to ORIGINAL-x units on the LOGIT scale
+fit_logit <- MEP_Univariate(
+  data = df, predictor = "x", outcome = "y",
+  transform_beta = "logit"
+)
 fit_logit$posterior
+fit_logit$diagnostics_single
 
-# (3) Alternative effect scales on ORIGINAL-x units
-fit_sas  <- EP_univariable(df, "x", "y", transform_beta1 = "SAS",
-                           n_iter = 6000, burn_in = 2000, seed = 42)
-fit_long <- EP_univariable(df, "x", "y", transform_beta1 = "Long",
-                           n_iter = 6000, burn_in = 2000, seed = 42)
-
-# (4) Shared missing handling
-df2 <- df; df2$x[c(5, 8)] <- NA
-fit_cc <- EP_univariable(df2, "x", "y", missing = "complete",
-                         n_iter = 4000, burn_in = 1500, seed = 9)
-fit_im <- EP_univariable(df2, "x", "y", missing = "impute",
-                         impute_args = list(numeric_method = "median"),
-                         n_iter = 4000, burn_in = 1500, seed = 9)
-                         
-## Single Chain
-fit_single <- EP_univariable(df, predictor = "x", outcome = "y",
-                          n_iter = 20000, burn_in = 5000, init_beta=c(0,0),
-                          seed = 9,
-                          transform_beta1 = "none")
-fit_single$posterior
-fit_single$convergence
-
-## Multiple Chains
-fit_multi <- EP_univariable(df, predictor = "x", outcome = "y", 
-                         n_iter = 20000, burn_in = 5000, init_beta=c(0,0),
-                         n_chains = 4,
-                         chain_seeds = c(101, 102, 103, 104),
-                         combine_chains = "stack",
-                         seed = 9,
-                         transform_beta1 = "none")
+## 3) Multiple chains
+fit_multi <- MEP_Univariate(
+  data = df, predictor = "x", outcome = "y",
+  n_chains = 4,
+  chain_seeds = c(101, 102, 103, 104),
+  combine_chains = "stack"
+)
 fit_multi$posterior
 fit_multi$diagnostics_multi
 ```
 
-**Interpretation**
-- `beta1` (default) — change in log-odds per **1 SD** increase in X (standardized scale).
-- `beta1_logit` — change in log-odds per **1 unit** increase in original X.
-- `beta1_SAS = beta1_logit * (π/√3)`; `beta1_Long = beta1_logit * (π/√3 + 1)`.
-- `beta0_orig` aligns the intercept with original X-units.
 ---
 
 ## Unified Latent Issue — `MEP_latent()`
@@ -408,20 +403,22 @@ latent_separation(
 )
 
 # Severity-adaptive Univariate Bayes
-EP_univariable(
-  data, predictor, outcome = "y",
-  missing = c("complete","impute"), impute_args = list(
-    numeric_method = c("median","mean"),
-    factor_method  = c("mode")
-  ),
-  n_iter = 20000, burn_in = 5000,
-  step_hi = 0.30, step_lo = 0.12,
-  ci_level = 0.95, compare = TRUE,
-  return_draws = FALSE, seed = NULL,
-  transform_beta1 = c("none","logit","SAS","Long"),
-  sigma0 = 10, sigma1_hi = 5, sigma1_lo = 0.15,
-  kappa_min = 1, kappa_max = 2.5,
-  tune_threshold_hi = 0.45, tune_threshold_lo = 0.20, tune_interval = 500
+MEP_Univariate(
+    data, predictor, outcome = "y",
+    burn_in = 5000,          # burn-in iterations per chain (discarded)
+    n_iter = 15000,          # post-burn draws per chain
+    init_beta = c(0, 0),
+    step_hi = 0.30, step_lo = 0.12,
+    ci_level = 0.95,
+    n_chains = 1, chain_seeds = NULL, combine_chains = c("stack","none"),
+    ess_threshold = 150, geweke_z_threshold = 2,
+    compare = TRUE,
+    return_draws = TRUE,
+    transform_beta = c("none","logit","SAS","Long"),
+    sigma0 = 10, sigma1_hi = 5, sigma1_lo = 0.15,
+    kappa_min = 1, kappa_max = 2.5,
+    tune_threshold_hi = 0.45, tune_threshold_lo = 0.20, tune_interval = 500, 
+    ci_levels_for_stars = c(0.90, 0.95, 0.99)
 )
 
 # Unified latent

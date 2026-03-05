@@ -118,7 +118,8 @@ latent_separation <- function(
     if (is.character(y)) {
       lev <- factor(y)
       if (length(lev) != 2L) stop("Character outcome must have exactly 2 levels.")
-      return(as.integer(y == lev[2L]))
+      #(as.integer(y == lev[2L]))
+      return(as.integer(lev == levels(lev)[2L]))
     }
     y <- as.integer(y)
     if (!all(y %in% c(0L,1L))) stop("Outcome y must be binary (0/1, factor/logical/2-level char).")
