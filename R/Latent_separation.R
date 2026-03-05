@@ -3,6 +3,7 @@
 #   Updates:
 #   1) missing_scope = "global" option to fix samples across subsets
 #   2) minimal_strategy = auto/forward/backward with backward options
+#   3) verbose option for progress and stop-reason messages
 # ============================================================
 
 #' LP-based latent separation detection (with optional subset search)
@@ -34,8 +35,12 @@
 #'
 #' Runtime controls for minimal search:
 #' - options(latent_separation.eval_limit = N)
-#' - options(latent_separation.show_progress = TRUE/FALSE)
 #' - options(latent_separation.progress_every = M)
+#'
+#' Progress reporting:
+#' - verbose = TRUE prints progress updates and key stop reasons for minimal-subset search.
+#' - For advanced control, you can also use options(latent_separation.show_progress = TRUE/FALSE),
+#'   but verbose is the recommended user-facing switch.
 #'
 #' @param y Binary outcome (0/1 or 2-level factor/character/logical).
 #' @param X Matrix or data frame of predictors (columns = variables).
@@ -57,6 +62,8 @@
 #' @param minimal_strategy "auto","forward","backward". Default "auto".
 #' @param small_p_threshold Threshold used by minimal_strategy="auto". Default 15.
 #' @param backward_exhaustive If TRUE and strategy is backward, enumerate by size. Default FALSE.
+#' @param verbose Logical; if TRUE, print progress messages during minimal-subset search.
+#'   Defaults to getOption("latent_separation.verbose", FALSE).
 #'
 #' @return
 #' - Single-set mode: list with fields type, satisfied, available_types, removed, message,
@@ -85,15 +92,22 @@ latent_separation <- function(
     missing_scope = c("global","subset"),
     minimal_strategy = c("auto","forward","backward"),
     small_p_threshold = 15L,
-    backward_exhaustive = FALSE
+    backward_exhaustive = FALSE,
+    verbose = getOption("latent_separation.verbose", FALSE)
 ) {
   mode <- match.arg(mode)
   missing <- match.arg(missing)
   missing_scope <- match.arg(missing_scope)
   minimal_strategy <- match.arg(minimal_strategy)
+  verbose <- isTRUE(verbose)
   if (is.null(eps_boundary)) eps_boundary <- epsilon
 
   `%||%` <- function(a, b) if (!is.null(a)) a else b
+
+  vcat <- function(...) {
+    if (verbose) message(sprintf(...))
+    invisible(NULL)
+  }
 
   # coerce X to data.frame
   if (is.matrix(X)) {
@@ -118,7 +132,6 @@ latent_separation <- function(
     if (is.character(y)) {
       lev <- factor(y)
       if (length(lev) != 2L) stop("Character outcome must have exactly 2 levels.")
-      #(as.integer(y == lev[2L]))
       return(as.integer(lev == levels(lev)[2L]))
     }
     y <- as.integer(y)
@@ -441,12 +454,9 @@ latent_separation <- function(
 
   # === Minimal-subset search ===
   if (find_minimal) {
-    # Early global check: if full set is not a hit under mode, no subset can be a hit under that mode
     full_res <- run_one(seq_len(p), mode, compute_removed = FALSE)
     if (!isTRUE(full_res$hit)) {
-      if (isTRUE(getOption("latent_separation.show_progress", FALSE))) {
-        message("minimal search: stopped early because full predictor set is not a hit under the requested mode; returning empty.")
-      }
+      vcat("minimal search: early stop because full predictor set is not a hit under mode = \"%s\".", mode)
       return(list(minimal_subsets = list()))
     }
 
@@ -458,9 +468,12 @@ latent_separation <- function(
 
     eval_count <- 0L
     eval_limit <- getOption("latent_separation.eval_limit", Inf)
-    show_progress <- isTRUE(getOption("latent_separation.show_progress", FALSE))
+    show_progress <- verbose || isTRUE(getOption("latent_separation.show_progress", FALSE))
     progress_every <- as.integer(getOption("latent_separation.progress_every", 200L))
     if (is.na(progress_every) || progress_every <= 0L) progress_every <- 200L
+
+    vcat("minimal search: strategy=%s, p=%d, min_vars=%d, eval_limit=%s",
+         minimal_strategy, p, min_vars, if (is.finite(eval_limit)) eval_limit else "Inf")
 
     tick_progress <- function(hits_count, best_k) {
       if (!show_progress) return(invisible(NULL))
@@ -472,7 +485,7 @@ latent_separation <- function(
       invisible(NULL)
     }
 
-    # ---- Forward minimal (your current behavior) ----
+    # ---- Forward minimal ----
     if (minimal_strategy == "forward") {
       minimal <- list()
       minimal_idx <- list()
@@ -493,6 +506,7 @@ latent_separation <- function(
           eval_count <- eval_count + 1L
           if (eval_count > eval_limit) {
             warning("Reached evaluation limit in minimal-subset search; results may be incomplete.")
+            vcat("minimal search: stopped at eval_limit=%s.", as.character(eval_limit))
             break
           }
           tick_progress(hits_count, best_k)
@@ -525,8 +539,6 @@ latent_separation <- function(
     }
 
     # ---- Backward minimal ----
-    # Default: greedy backward elimination that returns one locally minimal separating set
-    # Optional: backward_exhaustive enumerates subsets by decreasing size p-1, p-2, ...
     if (!isTRUE(backward_exhaustive)) {
       current <- seq_len(p)
       improved <- TRUE
@@ -541,6 +553,7 @@ latent_separation <- function(
           eval_count <- eval_count + 1L
           if (eval_count > eval_limit) {
             warning("Reached evaluation limit in backward greedy search; result may be incomplete.")
+            vcat("backward greedy: stopped at eval_limit=%s.", as.character(eval_limit))
             improved <- FALSE
             break
           }
@@ -551,12 +564,12 @@ latent_separation <- function(
             current <- candidate
             improved <- TRUE
             hits_count <- hits_count + 1L
+            if (verbose) vcat("backward greedy: removed one variable, remaining k=%d.", length(current))
             break
           }
         }
       }
 
-      # local minimality check: removing any single var should break hit
       minimal_by_1 <- TRUE
       for (j in current) {
         cand2 <- setdiff(current, j)
@@ -566,6 +579,7 @@ latent_separation <- function(
         if (eval_count > eval_limit) {
           minimal_by_1 <- NA
           warning("Reached evaluation limit during minimality verification; minimal_by_1 is NA.")
+          vcat("backward greedy: minimality check stopped at eval_limit=%s.", as.character(eval_limit))
           break
         }
         out2 <- run_one(cand2, mode, compute_removed = FALSE)
@@ -589,10 +603,11 @@ latent_separation <- function(
         minimal_by_1 = minimal_by_1,
         eval_count = eval_count
       )
+      vcat("backward greedy: finished with k=%d, minimal_by_1=%s.", length(current), as.character(minimal_by_1))
       return(list(minimal_subsets = minimal))
     }
 
-    # ---- Backward exhaustive (return all hits at minimal size) ----
+    # ---- Backward exhaustive ----
     minimal <- list()
     best_hits <- list()
     best_k <- NA_integer_
@@ -601,10 +616,13 @@ latent_separation <- function(
     for (k in seq.int(p - 1L, min_vars, by = -1L)) {
       hits_at_k <- list()
 
+      vcat("backward exhaustive: scanning k=%d (choose(%d,%d) subsets).", k, p, k)
+
       for (cols in combn(p, k, simplify = FALSE)) {
         eval_count <- eval_count + 1L
         if (eval_count > eval_limit) {
           warning("Reached evaluation limit in backward exhaustive search; results may be incomplete.")
+          vcat("backward exhaustive: stopped at eval_limit=%s.", as.character(eval_limit))
           break
         }
         tick_progress(hits_count, k)
@@ -623,18 +641,21 @@ latent_separation <- function(
       if (length(hits_at_k)) {
         best_hits <- hits_at_k
         best_k <- k
+        vcat("backward exhaustive: found hits at k=%d (count=%d).", k, length(hits_at_k))
         if (isTRUE(stop_at_first)) break
-        # keep going smaller to see if we can still hit with fewer vars
       } else {
-        # once we found hits at some larger k, and now no hits at smaller k,
-        # the minimal size is best_k and we can stop
-        if (!is.na(best_k)) break
+        if (!is.na(best_k)) {
+          vcat("backward exhaustive: no hits at k=%d; minimal size confirmed as best_k=%d.", k, best_k)
+          break
+        }
       }
     }
 
-    if (!length(best_hits)) return(list(minimal_subsets = list(), best_k = NA_integer_))
+    if (!length(best_hits)) {
+      vcat("backward exhaustive: no hits found under requested mode.")
+      return(list(minimal_subsets = list(), best_k = NA_integer_))
+    }
 
-    # Return ALL problematic combinations at size best_k
     for (nm in names(best_hits)) {
       cols <- best_hits[[nm]]
       out <- run_one(cols, mode, compute_removed = TRUE)
@@ -651,8 +672,8 @@ latent_separation <- function(
       )
     }
 
+    vcat("backward exhaustive: returning %d hits at best_k=%d.", length(minimal), best_k)
     return(list(minimal_subsets = minimal, best_k = best_k))
-
   }
 
   stop("Unreachable state.")

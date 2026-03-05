@@ -22,10 +22,12 @@ When predictors **perfectly** (or quasi-completely) split the outcome, logistic 
   - a **non-negative boundary threshold** to guard against boundary ties,
   - a **continuous severity score** in [0,1].
 - `latent_separation()` multivariate detector using LP-based feasibility with options to:
-  - search for separating subsets,
-  - choose **perfect**, **quasi**, or **either** as hit criteria,
-  - handle missingness either **once globally** (recommended for subset search) or **per subset**,
-  - choose subset-search strategy: forward enumeration or backward.
+  - search for separating subsets
+  - choose **perfect**, **quasi**, or **either** as hit criteria
+  - handle missingness either **once globally** (recommended for subset search) or **per subset**
+  - choose subset search strategy: forward enumeration or backward
+  - optionally print progress and stop reasons during minimal subset search with `verbose = TRUE`
+
 
 ### Estimation (Bayesian)
 - `MEP_Univariate()` — DISCO-severity-adaptive **univariate** logistic regression with an **MEP** prior; shared missing handling (applied once), standardized X for **severity & fit**, optional back-transforms (logit / SAS / Long), and a GLM comparator on standardized X.
@@ -91,7 +93,22 @@ gt_uni_separation_all(df_miss, outcome = "Y", missing = "complete")
 > This table summarizes univariate screen results of each predictor against the outcome (`Y`) using **complete-case** data. It flags whether any single predictor causes separation in a logistic model. See the README earlier version for column definitions: Separation Index, Severity, Boundary Threshold, Single-Tie Boundary, Tie Count, Missing-Data Handling block, Separation label, and Rows Used (Original Indices).
 
 ### Latent Separation
-#### Forward Diagnosis, recommend for small p
+
+`latent_separation()` is a multivariate detector using LP-based feasibility with options.
+
+#### Minimal subset search strategies
+
+- `minimal_strategy = "forward"`: enumerate increasing subset sizes (can be expensive)
+- `minimal_strategy = "backward"`: scalable greedy backward elimination by default
+- `minimal_strategy = "auto"`: forward if `p <= small_p_threshold` else backward
+- `backward_exhaustive = TRUE`: enumerate subsets by decreasing size `p-1, p-2, ...`, respecting `eval_limit`. This can be expensive for moderate or large `p`.
+
+#### Progress reporting
+
+- Set `verbose = TRUE` to print progress updates and key stop reasons for minimal subset search.
+- For advanced control, you can also set `options(latent_separation.show_progress = TRUE)`. When `verbose = TRUE`, progress is enabled automatically.
+
+#### Forward Diagnosis (recommend for small p)
 ```r
 res_lat_com <- latent_separation(
   y = df_miss$Y,
@@ -99,14 +116,17 @@ res_lat_com <- latent_separation(
   find_minimal = TRUE,
   missing = "complete",
   missing_scope = "global", # sample size to be fixed across all subset tests
-  minimal_strategy = "forward"
+  minimal_strategy = "forward",
+  verbose = TRUE
 )
 gt_latent_separation(res_lat_com, title = "Latent Minimal Subsets - Forward")
 
 ```
 ![Latent DISCO table](man/figures/readme-latent-gt-forward.png)
 
-#### Backward Diagnosis, recommend for large p to find one locally minimal separating set quickly.
+#### Backward Diagnosis (recommended for large p)
+
+Greedy backward returns one locally minimal separating set quickly.
 
 ```r
 res_lat_com <- latent_separation(
@@ -115,7 +135,8 @@ res_lat_com <- latent_separation(
   find_minimal = TRUE,
   missing = "complete",
   missing_scope = "global",
-  minimal_strategy = "backward"
+  minimal_strategy = "backward",
+  verbose = TRUE
 )
 gt_latent_separation(res_lat_com, title = "Latent Minimal Subsets - Backward Quick Search")
 ```
@@ -132,7 +153,8 @@ res_lat_com <- latent_separation(
   missing = "complete",
   missing_scope = "global",
   minimal_strategy = "backward",
-  backward_exhaustive = TRUE
+  backward_exhaustive = TRUE,
+  verbose = TRUE
 )
 gt_latent_separation(res_lat_com, title = "Latent Minimal Subsets - Backward")
 ```
@@ -382,7 +404,6 @@ uni_separation(
   )
 )
 
-# Latent (multivariate) Detection
 latent_separation(
   y, X,
   find_minimal = FALSE,
@@ -396,6 +417,7 @@ latent_separation(
   minimal_strategy = c("auto","forward","backward"),
   small_p_threshold = 15,
   backward_exhaustive = FALSE,
+  verbose = FALSE,
   scale_X = TRUE,
   tau_complete = 1e-6,
   eps_boundary = NULL,

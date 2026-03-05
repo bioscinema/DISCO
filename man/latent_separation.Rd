@@ -24,7 +24,8 @@ latent_separation(
   missing_scope = c("global", "subset"),
   minimal_strategy = c("auto", "forward", "backward"),
   small_p_threshold = 15L,
-  backward_exhaustive = FALSE
+  backward_exhaustive = FALSE,
+  verbose = getOption("latent_separation.verbose", FALSE)
 )
 }
 \arguments{
@@ -67,6 +68,9 @@ latent_separation(
 \item{small_p_threshold}{Threshold used by minimal_strategy="auto". Default 15.}
 
 \item{backward_exhaustive}{If TRUE and strategy is backward, enumerate by size. Default FALSE.}
+
+\item{verbose}{Logical; if TRUE, print progress messages during minimal-subset search.
+Defaults to getOption("latent_separation.verbose", FALSE).}
 }
 \value{
 \itemize{
@@ -113,7 +117,13 @@ respecting eval_limit, can be expensive for moderate/large p.
 Runtime controls for minimal search:
 \itemize{
 \item options(latent_separation.eval_limit = N)
-\item options(latent_separation.show_progress = TRUE/FALSE)
 \item options(latent_separation.progress_every = M)
+}
+
+Progress reporting:
+\itemize{
+\item verbose = TRUE prints progress updates and key stop reasons for minimal-subset search.
+\item For advanced control, you can also use options(latent_separation.show_progress = TRUE/FALSE),
+but verbose is the recommended user-facing switch.
 }
 }
