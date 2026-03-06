@@ -374,7 +374,6 @@ fit_single$scaled_summary
 fit_single$diagnostics_single
 
 ## Multiple Chains
-
 fit_multi <- MEP_mixture(
   y, X,
   n_chains = 4,
