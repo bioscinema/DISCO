@@ -354,10 +354,8 @@ fit_multi$diagnostics_multi
   - `diagnostics_single` if `n_chains == 1`
   - `diagnostics_multiple` if `n_chains >= 2`
 - `draws` if `return_draws = TRUE` (matrix for one chain; list of matrices for multiple chains)
-  ```
 
-
-**Example**
+**Examples**
 ```r
 y <- c(0,0,0,0, 1,1,1,1)
 X <- data.frame(
