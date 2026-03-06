@@ -61,7 +61,7 @@ df_toy <- data.frame(
 )
 ```
 
-### Univairate Separation
+### Univariate Separation
 
 ```r
 # install.packages("gt")
@@ -184,16 +184,16 @@ Numeric predictors are z-scored for severity, GLM comparator, and the Bayesian f
 - `ci_level = 0.95`, MH auto-tuning during burn-in (`tune_threshold_hi = 0.45`, `tune_threshold_lo = 0.20`, `tune_interval = 500`)
 - `compare = TRUE` fits a GLM comparator on standardized X
 
-### Output
+**Output**
 - `posterior`: summaries for **standardized** `beta1` only. If `transform_beta1 ∈ {logit, SAS, Long}`, also includes the corresponding slope on the original predictor scale (`beta1_logit` or `beta1_SAS` or `beta1_Long`).
 - `disco`: severity metadata (`separation_type`, `severity_score`, `boundary_threshold`, `single_tie_boundary`, `missing_info` including `rows_used`).
 - `prior`, `mcmc` (including burn-in step-size trace), `comparators$glm` (coefficients on standardized X), `rows_used`.
 - If `return_draws = TRUE`, returns `draws$chain_std` and `draws$chain_orig`.
 
-### Reproducibility
+**Reproducibility**
 For reproducible chains, pass explicit `chain_seeds`. If `chain_seeds` is `NULL`, random seeds are generated.
 
-### Quick start
+**Examples**
 
 ```r
 y <- c(0,0,0,0, 1,1,1,1)
@@ -231,106 +231,93 @@ fit_multi$diagnostics_multi
 
 ---
 
-## Unified Latent Issue — `MEP_latent()`
+## Unified Latent Issue — `MEP_latent`
 
-Fits a logistic model with a **Multivariate Exponential Power (MEP)** prior via RW–MH and performs a small grid search over prior settings \((\mu, \Sigma, \kappa)\). Predictors are **always z-scored internally** (safe-scaling). Summaries and CIs are reported on the working (logit/standardized) scale and **back-transformed to the original (encoded) predictor scale**.
+`MEP_latent()` fits **intercept + one predictor + covariates** logistic regression. 
+
 
 **What it does**
-- Handles missingness **once** (complete-case or imputation) on the **raw** `X` and `y`, then uses the same rows for both fitting and the GLM reference.
 - **Encodes factors** in `X` with `model.matrix(~ ., data = X)` (treatment contrasts, baseline = first level), drops the intercept, and fits on the **numeric encoded** design.
 - Standardizes encoded predictors with a **safe scaler** (sd set to 1 when sd=0 or non-finite).
-- For each grid setting, runs RW–MH with an EP prior and collects posterior **means**, **credible intervals**, and a posterior predictive **match** statistic.
-- **Selects one run** by: (i) acceptance-rate window, (ii) closeness to a **GLM coefficient-ratio** reference (same standardized working scale), and (iii) posterior predictive agreement.
+- For each grid setting, runs RW-MH and computes acceptance rate, posterior summaries, and a posterior predictive match statistic.
+- **Selects one grid point using** by: (i) acceptance-rate window, (ii) closeness to a GLM coefficient-ratio reference (same standardized working scale), and (iii) posterior predictive agreement.
+- Reruns the selected grid point using chains and returns final summaries.
 
 **Factor handling & encoded names**
 - **Numeric predictors** appear as a single encoded column with their original name (e.g., `X3`).
 - **Factors** expand to treatment-contrast dummies (baseline = first level). For a 2-level factor `G` with levels `A` (baseline) and `B`, the encoded column is `GB` (effect **B vs A**). Change the baseline beforehand with `stats::relevel()`.
 - All reported effects are **per encoded column**.
 
-**Back-transforms (encoded scale)**
+**Back-transforms**
 - Let \(s_x\) be the SD of an encoded column (numeric or 0/1 dummy) on the encoded `X` scale, and \(\beta_\text{std}\) the slope in the standardized design. We report:
   - `b_A_original  = β_std / s_x` (per-unit effect on encoded scale),
   - `b_SAS_original  = b_A_original * π/√3`,
   - `b_Long_original = b_A_original * (π/√3 + 1)`.
   For a 0/1 dummy with prevalence \(p\), \(s_x = \sqrt{p(1-p)}\).
 
-**Returns** (selected run)
-- `best_settings` (`mu`, `Sigma_diag`, `kappa`), `best_acceptance`, `best_prop_matched`.
-- `scaled_summary` (includes Intercept) with `Mean`, `SD`, `CI_low`, `CI_high` on the working scale.
-- `standardized_coefs_back` with **means & CIs** for `Scaled` plus **`b_A_original`**, **`b_SAS_original`**, **`b_Long_original`** **per encoded column**.
+**Returns**
+
+- `best_settings`: list with the selected prior setting  
+  - `mu`: prior mean vector (stored as a comma-separated string)  
+  - `Sigma_diag`: diagonal of the prior scale matrix (stored as a comma-separated string)  
+  - `kappa`: selected EP shape parameter  
+  - `kappa_mode`: `"auto"` or `"fixed"`
+  - `acceptance_rate`: mean MH acceptance rate across best-point rerun chains  
+  - `prop_matched`: mean posterior predictive match statistic across best-point rerun chains  
+
+- `posterior_means`: posterior means for all parameters on the working scale  
+  - order matches `scaled_summary$Param` (Intercept, then encoded columns)
+
+- `scaled_summary`: working-scale posterior summary table (includes Intercept)  
+  - columns: `Param`, `Mean`, `SD`, `CI_low`, `CI_high`, `Sig`, `Star`
+
+- `standardized_coefs_back`: per encoded predictor-column effects with uncertainty  
+  - `Predictor`: encoded column name (from `model.matrix`)  
+  - `Scaled`, `Scaled_CI_low`, `Scaled_CI_high`: slope on standardized-design scale  
+  - `b_A_original`, `b_A_CI_low`, `b_A_CI_high`: per-unit effect on encoded scale  
+  - `b_SAS_original`, `b_SAS_CI_low`, `b_SAS_CI_high`: SAS rescaling  
+  - `b_Long_original`, `b_Long_CI_low`, `b_Long_CI_high`: Long rescaling
+
+- `burnin_step_trace_best`: list of length `n_chains`  
+  - each element is a data.frame with columns `iter`, `acceptance`, `step_size` recording burn-in tuning checkpoints
+
+- `step_size_final_best`: numeric vector of length `n_chains` with the final tuned step sizes
+
+- Diagnostics (only when `coda` is available)  
+  - if `n_chains == 1`: `diagnostics_single` with `ess`, `geweke_z`, `ess_min`, `geweke_max_abs`, `converged`  
+  - if `n_chains >= 2`: `diagnostics_multiple` with `rhat`, `rhat_max`, `ess`, `ess_min`
+
+- `draws` (optional, when `return_draws = TRUE`)  
+  - if `n_chains == 1`: a matrix of post-burn draws (rows = iterations, cols = parameters)  
+  - if `n_chains >= 2`: a list of length `n_chains`, each a post-burn draw matrix
+
 
 **Examples**
 
 ```r
-## Numeric example
 y <- c(0,0,0,0, 1,1,1,1)
 X <- data.frame(
   X1 = c(-1.86, -0.81,  1.32, -0.40,  0.91,  2.49,  0.34,  0.25),
   X2 = c( 0.52,  -0.07,  0.60,  0.67, -1.39,  0.16, -1.40, -0.09)
 )
 
-fit_cc <- MEP_latent(
-  y = y, X = X,
-  n_iter = 10000, burn_in = 1000, step_size = 0.4,
-  mu_vals = seq(-1, 1, by = 0.2),
-  sigma0_intercept = 10,
-  sigma_global_multipliers = c(0.1, 0.5, 1, 2, 5),
-  kappa_vals = c(0.5, 1, 2),
-  missing = "complete",
-  ci_level = 0.95, seed = 42
-)
-fit_cc$best_settings
-head(fit_cc$scaled_summary)
-head(fit_cc$standardized_coefs_back)
-
-## Factor example (treatment coding; baseline = first level)
-Xf <- data.frame(
-  X1 = X$X1,
-  G  = factor(c("A","A","B","B","A","B","A","B"), levels = c("A","B"))
-)
-fit_f <- MEP_latent(
-  y = y, X = Xf,
-  n_iter = 8000, burn_in = 800,
-  mu_vals = seq(-0.5, 0.5, by = 0.25),
-  sigma_global_multipliers = c(0.5, 1, 2),
-  kappa_vals = c(1, 2),
-  missing = "complete", seed = 99
-)
-fit_cc$scaled_summary
-fit_f$standardized_coefs_back     # contains column "GB" (= B vs A)
-
-## Impute: add an NA to a factor and a numeric column
-Xfi <- Xf; Xfi$X1[1] <- NA; Xfi$G[4] <- NA
-fit_i <- MEP_latent(
-  y = y, X = Xfi,
-  n_iter = 6000, burn_in = 600,
-  mu_vals = seq(-0.5, 0.5, by = 0.25),
-  sigma_global_multipliers = c(0.5, 1, 2),
-  kappa_vals = c(1, 2),
-  missing = "impute",
-  impute_args = list(numeric_method = "median", factor_method = "mode"),
-  seed = 77
-)
-fit_i$rows_used
-head(fit_i$scaled_summary)
-
 ## Single Chain
 fit_single <- MEP_latent(
   y, X,
-  n_iter = 10000, burn_in = 1000, init_beta = 0.01,
-  seed = 9
+  n_chains = 1,
+  chain_seed = 9
 )
 fit_single$scaled_summary
-fit_single$convergence
+fit_single$diagnostics_single
+
 
 ## Multiple Chains
 fit_multi <- MEP_latent(
   y, X,
-  n_iter = 10000, burn_in = 1000, init_beta = 0.01,
-  n_chains_best = 4,
-  chain_seeds_best = c(101, 102, 103, 104),
+  n_chains = 4,
+  chain_seeds = c(101, 102, 103, 104),
   combine_chains = "stack",
-  seed = 9
+  return_draws = TRUE
 )
 fit_multi$scaled_summary
 fit_multi$diagnostics_multi
@@ -341,18 +328,32 @@ fit_multi$diagnostics_multi
 
 ## Mixture Issue — `MEP_mixture()` 
 
-- Encodes `X` via `model.matrix(~ ., data = X)` (intercept dropped for slopes).
-- For each **original** predictor (before encoding), computes a **DISCO severity** (on modeling rows). **Numeric predictors are z-scored** for the severity computation (factors unchanged).
-- Maps severity \\( s \\in [0,1] \\) to an **anchor slope prior sd** and **κ** (intercept uses a wide prior).
-- Runs a small grid: **intercept mean offsets**, **global multiplier** on slope prior sds, and **κ** around the anchor average; chooses one run using an **acceptance window**, **posterior predictive agreement**, and (when available) **GLM ratio** closeness relative to a single **reference** predictor.
-- Returns posterior **means and CIs** for standardized slopes and, if requested, back-transforms (**logit / SAS / Long**) **means and CIs** per **encoded** column.
+`MEP_mixture()` fits a multi-predictor logistic regression with an MEP prior where slope prior scales are anchored by per-predictor DISCO severities.
 
-**Factor handling & labels**
-- Treatment contrasts with the **first level as baseline**.
-- Two-level factor `X3` with levels `A` (baseline) and `B` yields dummy **`X3B`** (=1 for B, 0 for A). Its coefficient is **B vs A** (controlling for other predictors).
-- Change baseline before calling to alter dummy labels:
-  ```r
-  X$X3 <- stats::relevel(X$X3, ref = "B")
+
+**What it does**
+- Checks `y` and `X` are complete-case and compatible.
+- Encodes factors using `model.matrix(~ ., data = X)` (treatment coding; baseline is the first level) and drops the intercept.
+- Computes univariate DISCO severity for each original predictor (numeric predictors are z-scored for the severity step).
+- Maps severity to anchor slope prior scales and an anchor-average `kappa`.
+- Runs a small grid over intercept prior mean offsets, global slope multipliers, and `kappa`, then selects one grid point using an acceptance-rate window, posterior predictive agreement, and (when available) GLM ratio closeness relative to a reference predictor.
+- Reruns the selected grid point using `n_chains` chains and returns final summaries.
+
+**Factor handling and encoded names**
+- Numeric predictors remain one encoded column with their original name.
+- Factors expand to treatment-contrast dummies (baseline is the first level). For a two-level factor `X3` with levels `A` (baseline) and `B`, the encoded column is `X3B` (effect `B` vs `A`).
+
+**Returns**
+- `ref_predictor`, `severity`, `grid_summary`
+- `best_settings`: selected grid setting, including `acceptance_rate` and `prop_matched`
+- `posterior_means`
+- `scaled_summary`
+- `standardized_coefs_back`
+- `burnin_step_trace_best`, `step_size_final_best`
+- Diagnostics (only when `coda` is available):
+  - `diagnostics_single` if `n_chains == 1`
+  - `diagnostics_multiple` if `n_chains >= 2`
+- `draws` if `return_draws = TRUE` (matrix for one chain; list of matrices for multiple chains)
   ```
 
 
@@ -368,26 +369,22 @@ X <- data.frame(
 ## Single Chain
 fit_single <- MEP_mixture(
   y, X,
-  n_iter = 10000, burn_in = 1000, init_beta = 0.01,
-  transform_back = "none",
-  seed = 9
+  n_chains = 1,
+  chain_seed = 9
 )
-fit_single$convergence
-fit_single$posterior$effects
-
+fit_single$scaled_summary
+fit_single$diagnostics_single
 
 ## Multiple Chains
+
 fit_multi <- MEP_mixture(
   y, X,
-  n_iter = 10000, burn_in = 1000, init_beta = 0.01,
-  n_chains_best = 4,
-  chain_seeds_best = c(101, 102, 103, 104),
-  combine_chains = "stack",
-  transform_back = "none",
-  seed = 9
+  n_chains = 4,
+  chain_seed = c(101, 102, 103, 104),
+  combine_chains = "stack"
 )
-fit_multi$diagnostics_multi
-fit_multi$posterior$effects
+fit_multi$scaled_summary
+fit_multi$diagnostics_multiple
 ```
 
 **Notes**
@@ -396,66 +393,6 @@ fit_multi$posterior$effects
 - Naming note: `MEP_latent()` reports `b_A_*` for the per-unit (logit) effect; `MEP_mixture()` uses `b_logit_*`. These are equivalent (A ≡ logit).
 
 ---
-
-## API cheatsheet
-```r
-# Univariate Detection
-uni_separation(
-  data, predictor, outcome = "Y"
-)
-
-latent_separation(
-  y, X,
-  find_minimal = FALSE,
-  test_combinations = FALSE,
-  min_vars = 2, max_vars = NULL,
-  mode = c("either","perfect","quasi"),
-  stop_at_first = FALSE,
-  minimal_strategy = c("auto","forward","backward"),
-  small_p_threshold = 15,
-  backward_exhaustive = FALSE,
-  verbose = FALSE,
-  scale_X = TRUE,
-  tau_complete = 1e-6,
-  eps_boundary = NULL,
-  quasi_to_none_if = 0.5
-)
-
-# Severity-adaptive Univariate Bayes
-MEP_Univariate(
-    data, predictor, outcome = "y",
-    burn_in = 5000,          # burn-in iterations per chain (discarded)
-    n_iter = 15000,          # post-burn draws per chain
-    init_beta = c(0, 0),
-    step_hi = 0.30, step_lo = 0.12,
-    ci_level = 0.95,
-    n_chains = 1, chain_seeds = NULL, combine_chains = c("stack","none"),
-    ess_threshold = 150, geweke_z_threshold = 2,
-    compare = TRUE,
-    return_draws = TRUE,
-    transform_beta = c("none","logit","SAS","Long"),
-    sigma0 = 10, sigma1_hi = 5, sigma1_lo = 0.15,
-    kappa_min = 1, kappa_max = 2.5,
-    tune_threshold_hi = 0.45, tune_threshold_lo = 0.20, tune_interval = 500, 
-    ci_levels_for_stars = c(0.90, 0.95, 0.99)
-)
-
-# Unified latent
-MEP_latent(
-  y, X,
-  missing = c("complete","impute"),
-  impute_args = list(),
-  n_iter = 10000, burn_in = 1000
-)
-
-# Mixture Situation
-MEP_mixture(
-  y, X,
-  missing = c("complete","impute"),
-  impute_args = list(),
-  n_iter = 10000, burn_in = 1000
-)
-```
 
 ### Notes & assumptions
 - Outcome is binary and will be normalized to `{0,1}` (supports logical or 2-level factor/character).
