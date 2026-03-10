@@ -1,13 +1,13 @@
 # DISCO
 **DI**agnosis of **S**eparation and **C**orrection of **O**dds-ratio inflation in logistic regression
 
-> Fast diagnostics for **perfect** and **quasi-complete** separation in binary outcomes, with clear severity scoring, per-subset missing-data handling, and pretty `gt` tables — plus severity-adaptive and MEP-regularized Bayesian estimators.
+>DIagnosis of Separation in Logistic Regression: detect perfect and quasi-complete separation in binary outcomes with a clear severity score and traceable summaries.
 
+>Correction of Odds-Ratio Inflation: stabilize estimates under separation using Bayesian framework.
 ---
 
 ## Why separation matters
-When predictors **perfectly** (or quasi-completely) split the outcome, logistic regression can produce **infinite** (or severely inflated) odds ratios and unstable inference. **DISCO** helps you **detect** these cases early and **stabilize** estimates with Bayesian priors.
-
+When predictors perfectly or quasi-completely separate a binary outcome, logistic regression can yield infinite or severely inflated odds ratios and unstable inference.
 ---
 
 ## Overview
@@ -24,13 +24,11 @@ When predictors **perfectly** (or quasi-completely) split the outcome, logistic 
 - `latent_separation()` multivariate detector using LP-based feasibility with options to:
   - search for separating subsets
   - choose **perfect**, **quasi**, or **either** as hit criteria
-  - handle missingness either **once globally** (recommended for subset search) or **per subset**
   - choose subset search strategy: forward enumeration or backward
   - optionally print progress and stop reasons during minimal subset search with `verbose = TRUE`
 
-
-### Estimation (Bayesian)
-- `MEP_Univariate()` — DISCO-severity-adaptive **univariate** logistic regression with an **MEP** prior; shared missing handling (applied once), standardized X for **severity & fit**, optional back-transforms (logit / SAS / Long), and a GLM comparator on standardized X.
+### Estimation Correction
+- `MEP_Univariate()` — DISCO-severity-adaptive **univariate** logistic regression with an **MEP** prior; standardized X for **severity & fit**, optional back-transforms (logit / SAS / Long), and a GLM comparator on standardized X.
 - `MEP_latent()` — **unified latent** (numeric **+ factor** support via `model.matrix`): handles missingness **once** on raw `y, X`, encodes factors (treatment; baseline = first level), **safe-scales encoded columns**, runs a small grid over \((\mu, \sigma_{\text{global}}, \kappa)\), and selects one run via acceptance-window + GLM-ratio closeness + posterior predictive agreement. Reports working-scale summaries **with CIs** and back-transformed **b_A / b_SAS / b_Long** **(per encoded column)** with CIs.
 - `MEP_mixture()` — **severity-anchored multi-predictor** logistic with **numeric + factor** predictors. Encodes factors via `model.matrix(~ ., data = X)`, anchors slope prior scales by **per-predictor DISCO severities** (numeric severities computed on z-scores; factors unchanged for severity step), runs a small grid (intercept mean offsets, global slope multipliers, κ), and selects one run via acceptance window + checks. Reports posterior **means** on the standardized scale and optional back-transformed **A / SAS / Long** **means** per encoded column.
 
@@ -396,7 +394,7 @@ fit_multi$diagnostics_multiple
 - Categorical predictors are handled directly (univariate) or via dummy encoding (latent / mixture).
 - **MEP_latent** and **MEP_mixture** outputs are per **encoded** column (e.g., `FactorLevel` dummies) **with CIs**.
 - Change baselines with `stats::relevel()` to alter dummy interpretation.
-- Testing covers: univariate & latent separation cases, minimal-subset search, and missingness modes (complete-case vs imputation). Use:
+- Testing:
   ```r
   devtools::test()
   # or
