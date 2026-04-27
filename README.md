@@ -155,7 +155,7 @@ res_lat_com <- latent_separation(
 )
 gt_latent_separation(res_lat_com, title = "Latent Minimal Subsets - Backward Beam Search")
 ```
-![Latent DISCO table](man/figures/readme-Latent Minimal Subsets - Backward Beam Search.png)
+![Latent DISCO table](man/figures/readme-latent-beam.png)
 
 If `backward_exhaustive = TRUE`, the algorithm performs layered exhaustive backward search. It starts from the full predictor set, generates all one-variable-deleted candidates from the current separating frontier, and keeps all separating subsets at each layer. It stops when no smaller separating subset is found, when `min_vars` is reached, or when `eval_limit` is exceeded.
 
