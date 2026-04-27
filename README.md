@@ -21,10 +21,12 @@
   - a **vectorized Rand index**,
   - a **non-negative boundary threshold** to guard against boundary ties,
   - a **continuous severity score** in [0,1].
-- `latent_separation()` multivariate detector using LP-based feasibility with options to:
-  - search for separating subsets
-  - choose **perfect**, **quasi**, or **either** as hit criteria
-  - choose subset search strategy: forward enumeration or backward
+- `latent_separation()` multivariate detector using LP-based linear programming with options to:
+  - detect **perfect**, **quasi-complete**, or **either** type of separation
+  - search for separating predictor subsets
+  - use fixed-sample subset evaluation with `missing_scope = "global"`
+  - choose subset search strategy: forward enumeration or backward beam search
+  - control backward beam search with `beam_width`
   - optionally print progress and stop reasons during minimal subset search with `verbose = TRUE`
 
 ### Estimation Correction
@@ -92,14 +94,19 @@ gt_uni_separation_all(df_toy, outcome = "Y")
 
 ### Latent Separation
 
-`latent_separation()` is a multivariate detector using LP-based feasibility with options.
+`latent_separation()` is a multivariate detector using LP-based feasibility feasibility and severity diagnostics. It first checks for complete separation using a max-margin LP, then computes a multivariate severity lower bound, `K_relax`, for quasi-complete separation.
+
+By default, weak quasi-complete separation is treated as no separation when `K_relax / n` is large, controlled by `quasi_to_none_if = 0.5`.
 
 #### Minimal subset search strategies
 
-- `minimal_strategy = "forward"`: enumerate increasing subset sizes (can be expensive)
-- `minimal_strategy = "backward"`: scalable greedy backward elimination by default
-- `minimal_strategy = "auto"`: forward if `p <= small_p_threshold` else backward
-- `backward_exhaustive = TRUE`: enumerate subsets by decreasing size `p-1, p-2, ...`, respecting `eval_limit`. This can be expensive for moderate or large `p`.
+- `minimal_strategy = "forward"`: enumerates subsets in increasing size and returns minimal separating subsets. This is exact but can be expensive.
+- `minimal_strategy = "backward"`: starts from the full predictor set and removes predictors layer by layer.
+  - By default, backward search uses a beam-style search.
+  - `beam_width` controls how many best separating subsets are retained at each layer.
+  - Ties at the beam cutoff are retained.
+- `minimal_strategy = "auto"`: uses forward search when `p <= small_p_threshold`, and backward search otherwise.
+- `backward_exhaustive = TRUE`: uses layered exhaustive backward search instead of beam search, keeping all separating subsets at each layer subject to `eval_limit`. This can be expensive for moderate or large `p`.
 
 #### Progress reporting
 
@@ -135,7 +142,7 @@ gt_latent_separation(res_lat_com, title = "Latent Minimal Subsets - Forward")
 
 #### Backward Diagnosis (recommended for large p)
 
-Greedy backward returns one locally minimal separating set quickly.
+Backward search is recommended for larger `p`. By default, it uses a beam-style search: starting from the full predictor set, it removes one predictor at a time and retains the best separating subsets at each layer. The number of retained subsets is controlled by `beam_width`.
 
 ```r
 res_lat_com <- latent_separation(
@@ -143,14 +150,14 @@ res_lat_com <- latent_separation(
   X = df_toy[, c("X1","X2","Race","L1")],
   find_minimal = TRUE,
   minimal_strategy = "backward",
+  beam_width = 10,
   verbose = TRUE
 )
-gt_latent_separation(res_lat_com, title = "Latent Minimal Subsets - Backward Quick Search")
+gt_latent_separation(res_lat_com, title = "Latent Minimal Subsets - Backward Beam Search")
 ```
-![Latent DISCO table](man/figures/readme-latent-gt-backward-quick.png)
+![Latent DISCO table](man/figures/readme-Latent Minimal Subsets - Backward Beam Search.png)
 
-
-If `backward_exhaustive = TRUE`, the algorithm enumerates subsets (from larger to smaller) to determine the smallest subset size that still produces a hit, then returns all hits at that minimal size (or only the first hit when `stop_at_first = TRUE`). This option can become prohibitively expensive as `p` increases.
+If `backward_exhaustive = TRUE`, the algorithm performs layered exhaustive backward search. It starts from the full predictor set, generates all one-variable-deleted candidates from the current separating frontier, and keeps all separating subsets at each layer. It stops when no smaller separating subset is found, when `min_vars` is reached, or when `eval_limit` is exceeded.
 
 ```r
 res_lat_com <- latent_separation(
@@ -159,12 +166,19 @@ res_lat_com <- latent_separation(
   find_minimal = TRUE,
   minimal_strategy = "backward",
   backward_exhaustive = TRUE,
+  missing_scope = "global",
   verbose = TRUE
 )
-gt_latent_separation(res_lat_com, title = "Latent Minimal Subsets - Backward")
 ```
-![Latent DISCO table](man/figures/readme-latent-gt-backward.png)
 
+#### Runtime controls
+
+For large subset searches, you can limit evaluations and control progress frequency:
+
+```r
+options(latent_separation.eval_limit = 5000)
+options(latent_separation.progress_every = 200)
+```
 
 ---
 

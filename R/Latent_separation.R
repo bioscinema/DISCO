@@ -2,75 +2,154 @@
 # LP-based latent separation detection (full updated version)
 #   Updates:
 #   1) missing_scope = "global" option to fix samples across subsets
-#   2) minimal_strategy = auto/forward/backward with backward options
-#   3) verbose option for progress and stop-reason messages
+#   2) minimal_strategy = auto/forward/backward
+#   3) backward search supports beam search and layered exhaustive search
+#   4) beam_width contro_
+#   5) verbose option for progress and stop-reason messages
 # ============================================================
 
-#' LP-based latent separation detection (with optional subset search)
+#' LP-based latent separation detection with optional subset search
 #'
-#' Detects latent (complete or quasi-complete) separation for a binary outcome
-#' using linear programming in the multivariate space.
+#' Detects latent complete or quasi-complete separation for a binary outcome
+#' using linear programming in the multivariate predictor space.
 #'
-#' Two-stage pipeline:
-#'   Stage A: max-margin LP with L1 equality normalization to identify complete separation
-#'   Stage B: severity LP to compute multivariate severity lower bound K_relax
+#' The method uses a two-stage LP pipeline.
 #'
-#' Notes:
-#' - Quasi is treated as non-substantive and labeled no separation when
-#'   K_relax / n is large (default quasi_to_none_if = 0.5) to reduce false positives.
-#' - Legacy row-deletion diagnostic for quasi is kept (removed indices), but does not
-#'   drive the quasi decision.
+#' Stage A solves a max-margin linear program with L1 equality normalization
+#' to identify complete separation.
 #'
-#' Missingness handling across subsets:
-#' - missing_scope = "global" (recommended): missing handling is done once on full X,
-#'   then reused for every subset so rows are fixed across subset evaluations.
-#' - missing_scope = "subset": missing handling is done per subset (legacy behavior).
+#' Stage B solves a severity linear program to compute the multivariate
+#' severity lower bound, `K_relax`, for quasi-complete separation.
 #'
-#' Minimal subset search strategies:
-#' - minimal_strategy = "forward": enumerate increasing subset sizes (can be expensive)
-#' - minimal_strategy = "backward": scalable greedy backward elimination by default
-#' - minimal_strategy = "auto": forward if p <= small_p_threshold else backward
-#' - backward_exhaustive = TRUE: enumerate subsets by decreasing size p-1, p-2, ...
-#'   respecting eval_limit, can be expensive for moderate/large p.
+#' Quasi-complete separation is treated as non-substantive and labeled as
+#' no separation when `K_relax / n` is large. By default, this threshold is
+#' controlled by `quasi_to_none_if = 0.5`. This rule is intended to reduce
+#' false positives from weak or non-substantive quasi-complete separation.
 #'
-#' Runtime controls for minimal search:
-#' - options(latent_separation.eval_limit = N)
-#' - options(latent_separation.progress_every = M)
+#' A legacy row-deletion diagnostic for quasi-complete separation is retained.
+#' The returned `removed` indices indicate observations whose deletion would
+#' yield complete separation, but these indices do not determine the quasi
+#' decision.
 #'
-#' Progress reporting:
-#' - verbose = TRUE prints progress updates and key stop reasons for minimal-subset search.
-#' - For advanced control, you can also use options(latent_separation.show_progress = TRUE/FALSE),
-#'   but verbose is the recommended user-facing switch.
+#' Missing data can be handled either globally or separately within each
+#' subset evaluation. With `missing_scope = "global"`, missing-data handling is
+#' performed once on the full predictor set, and the resulting fixed sample is
+#' reused for every subset. This is the recommended setting when comparing
+#' different predictor subsets. With `missing_scope = "subset"`, missing-data
+#' handling is performed separately for each subset, which preserves the legacy
+#' behavior but may evaluate different subsets on different samples.
 #'
-#' @param y Binary outcome (0/1 or 2-level factor/character/logical).
-#' @param X Matrix or data frame of predictors (columns = variables).
-#' @param test_combinations If TRUE, test every subset of size >= min_vars.
-#' @param min_vars Minimum subset size to consider (default 2).
-#' @param epsilon Numeric scalar > 0. Legacy margin parameter; used as default for eps_boundary.
-#' @param only_perfect Legacy flag for exhaustive mode (kept for compatibility).
-#' @param find_minimal If TRUE, return separating subsets based on strategy.
-#' @param mode One of "either", "perfect", or "quasi".
-#' @param max_vars Optional upper bound on subset size (default all the way to p).
-#' @param stop_at_first If TRUE, stop after the first minimal hit (forward or backward_exhaustive).
-#' @param missing How to treat missing data: "complete" or "impute".
-#' @param impute_args Optional list of imputation settings when missing="impute".
-#' @param scale_X Logical; if TRUE, standardize encoded predictors with scale().
-#' @param tau_complete Threshold on delta_hat to declare complete separation. Default 1e-6.
-#' @param eps_boundary Target margin delta for severity LP. If NULL, defaults to epsilon.
-#' @param quasi_to_none_if Numeric in (0,1]. If K_relax >= rho * n, quasi treated as none.
-#' @param missing_scope "global" or "subset". Default "global".
-#' @param minimal_strategy "auto","forward","backward". Default "auto".
-#' @param small_p_threshold Threshold used by minimal_strategy="auto". Default 15.
-#' @param backward_exhaustive If TRUE and strategy is backward, enumerate by size. Default FALSE.
-#' @param verbose Logical; if TRUE, print progress messages during minimal-subset search.
-#'   Defaults to getOption("latent_separation.verbose", FALSE).
+#' Minimal subset search is controlled by `minimal_strategy`. The `"forward"`
+#' strategy enumerates subsets in increasing size and returns minimal separating
+#' subsets, but it can be computationally expensive. The `"backward"` strategy
+#' starts from the full predictor set and removes predictors layer by layer.
+#' By default, backward search uses a beam-style search controlled by
+#' `beam_width`, retaining the best separating subsets at each layer. Ties at
+#' the beam cutoff are retained. If `backward_exhaustive = TRUE`, backward
+#' search instead performs layered exhaustive search, keeping all separating
+#' subsets at each layer, subject to the evaluation limit. The `"auto"` strategy
+#' uses forward search when `p <= small_p_threshold` and backward search
+#' otherwise.
+#'
+#' Runtime can be controlled with:
+#'
+#' `options(latent_separation.eval_limit = N)`
+#'
+#' `options(latent_separation.progress_every = M)`
+#'
+#' Progress reporting can be enabled with `verbose = TRUE`. This prints progress
+#' updates and key stopping reasons during minimal-subset search. Advanced users
+#' may also use `options(latent_separation.show_progress = TRUE/FALSE)`, but
+#' `verbose` is the recommended user-facing switch.
+#'
+#' @param y Binary outcome, supplied as 0/1, a two-level factor, a two-level
+#'   character vector, or a logical vector.
+#' @param X Matrix or data frame of predictors. Columns correspond to variables.
+#' @param test_combinations Logical. If `TRUE`, test all predictor subsets of
+#'   size at least `min_vars`.
+#' @param min_vars Minimum subset size to consider. Default is 2.
+#' @param epsilon Numeric scalar greater than 0. Legacy margin parameter; used
+#'   as the default value for `eps_boundary` when `eps_boundary = NULL`.
+#' @param only_perfect Logical. Legacy flag for exhaustive mode. If `TRUE`, only
+#'   perfect separation is returned.
+#' @param find_minimal Logical. If `TRUE`, search for separating subsets using
+#'   the strategy specified by `minimal_strategy`.
+#' @param mode Character string specifying the target separation type. One of
+#'   `"either"`, `"perfect"`, or `"quasi"`.
+#' @param max_vars Optional upper bound on subset size. Defaults to the total
+#'   number of predictors.
+#' @param stop_at_first Logical. If `TRUE`, stop after the first minimal hit in
+#'   forward search or backward layered exhaustive search.
+#' @param missing Character string specifying how missing data are handled. One
+#'   of `"complete"` or `"impute"`.
+#' @param impute_args Optional list of imputation settings used when
+#'   `missing = "impute"`.
+#' @param scale_X Logical. If `TRUE`, encoded predictors are standardized using
+#'   `scale()`.
+#' @param tau_complete Numeric threshold on `delta_hat` used to declare complete
+#'   separation. Default is `1e-6`.
+#' @param eps_boundary Target margin delta for the severity LP. If `NULL`, it
+#'   defaults to `epsilon`.
+#' @param quasi_to_none_if Numeric value in `(0, 1]`. If
+#'   `K_relax >= quasi_to_none_if * n`, quasi-complete separation is treated as
+#'   no separation.
+#' @param missing_scope Character string specifying whether missing-data handling
+#'   is applied globally or separately by subset. One of `"global"` or
+#'   `"subset"`. Default is `"global"`.
+#' @param minimal_strategy Character string specifying the minimal-subset search
+#'   strategy. One of `"auto"`, `"forward"`, or `"backward"`. Default is
+#'   `"auto"`.
+#' @param small_p_threshold Integer threshold used by
+#'   `minimal_strategy = "auto"`. Forward search is used when
+#'   `p <= small_p_threshold`; backward search is used otherwise. Default is 15.
+#' @param backward_exhaustive Logical. If `TRUE` and
+#'   `minimal_strategy = "backward"`, perform layered exhaustive backward search
+#'   instead of beam-style backward search. Default is `FALSE`.
+#' @param beam_width Positive integer controlling the number of best separating
+#'   subsets retained at each layer in beam-style backward search. Ties at the
+#'   cutoff are retained. Default is 10.
+#' @param verbose Logical. If `TRUE`, print progress messages and stop reasons
+#'   during minimal-subset search. Defaults to
+#'   `getOption("latent_separation.verbose", FALSE)`.
 #'
 #' @return
-#' - Single-set mode: list with fields type, satisfied, available_types, removed, message,
-#'   missing_info, diagnostics.
-#' - Exhaustive mode: named list of hits with type, vars, removed, missing_info, diagnostics.
-#' - Minimal mode: list with $minimal_subsets, each entry containing type, vars, idx, removed,
-#'   missing_info, diagnostics plus strategy metadata.
+#' In single-set mode, a list with fields:
+#' \itemize{
+#'   \item `type`: detected separation type or no-separation label.
+#'   \item `satisfied`: logical indicator for whether the requested mode is satisfied.
+#'   \item `available_types`: separation types available under the fitted diagnostics.
+#'   \item `removed`: diagnostic row indices for quasi-complete separation.
+#'   \item `message`: human-readable summary.
+#'   \item `missing_info`: information about missing-data handling.
+#'   \item `diagnostics`: LP diagnostics including `delta_hat`, `K_relax`, and `n`.
+#' }
+#'
+#' In exhaustive mode, a named list of separating subsets. Each entry contains:
+#' \itemize{
+#'   \item `type`: separation type.
+#'   \item `vars`: predictor names in the separating subset.
+#'   \item `removed`: diagnostic row indices for quasi-complete separation.
+#'   \item `missing_info`: information about missing-data handling.
+#'   \item `diagnostics`: LP diagnostics.
+#' }
+#'
+#' In minimal mode, a list with `minimal_subsets`. Each entry contains:
+#' \itemize{
+#'   \item `type`: separation type.
+#'   \item `vars`: predictor names in the subset.
+#'   \item `idx`: column indices of the subset.
+#'   \item `removed`: diagnostic row indices for quasi-complete separation.
+#'   \item `missing_info`: information about missing-data handling.
+#'   \item `diagnostics`: LP diagnostics.
+#'   \item strategy metadata such as `strategy`, `k`, `beam_width`,
+#'     `tie_policy`, and `eval_count`, depending on the search strategy.
+#' }
+#'
+#' For backward beam search, the returned object may also include `best_k`,
+#' `beam_width`, `tie_policy`, and `eval_count`.
+#'
+#' For backward layered exhaustive search, the returned object may also include
+#' `best_k`, `eval_count`, and `exhaustive_type`.
 #'
 #' @export
 latent_separation <- function(
@@ -93,6 +172,7 @@ latent_separation <- function(
     minimal_strategy = c("auto","forward","backward"),
     small_p_threshold = 15L,
     backward_exhaustive = FALSE,
+    beam_width = 10L,
     verbose = getOption("latent_separation.verbose", FALSE)
 ) {
   mode <- match.arg(mode)
@@ -101,6 +181,9 @@ latent_separation <- function(
   minimal_strategy <- match.arg(minimal_strategy)
   verbose <- isTRUE(verbose)
   if (is.null(eps_boundary)) eps_boundary <- epsilon
+
+  beam_width <- as.integer(beam_width)
+  if (is.na(beam_width) || beam_width <= 0L) stop("beam_width must be a positive integer.")
 
   `%||%` <- function(a, b) if (!is.null(a)) a else b
 
@@ -117,12 +200,15 @@ latent_separation <- function(
   } else {
     X_raw <- data.frame(X, stringsAsFactors = FALSE, check.names = FALSE)
   }
+
   var_names <- colnames(X_raw)
   p <- ncol(X_raw)
   if (p == 0L) stop("X has no columns.")
   if (is.null(max_vars)) max_vars <- p
   min_vars <- max(1L, as.integer(min_vars))
   max_vars <- max(min_vars, as.integer(max_vars))
+  if (min_vars > p) stop("min_vars cannot exceed number of columns in X.")
+  if (max_vars > p) max_vars <- p
 
   y_raw <- y
 
@@ -131,7 +217,7 @@ latent_separation <- function(
     if (is.factor(y))  return(as.integer(y == levels(y)[2L]))
     if (is.character(y)) {
       lev <- factor(y)
-      if (length(lev) != 2L) stop("Character outcome must have exactly 2 levels.")
+      if (nlevels(lev) != 2L) stop("Character outcome must have exactly 2 levels.")
       return(as.integer(lev == levels(lev)[2L]))
     }
     y <- as.integer(y)
@@ -139,39 +225,54 @@ latent_separation <- function(
     y
   }
 
-  # ---- user must supply these utilities (already in your project) ----
-  # .handle_missing_for_subset(y, X, method, impute_args)
-  # encode_outcome(y)
-  # encode_predictors_lp(X)
-  # -------------------------------------------------------------------
-
+  # ============================================================
   # Stage A: max delta (tp/tm + L1 equality)
+  # ============================================================
   .lp_max_delta <- function(y01, X_int, tau_complete = 1e-6) {
-    ypm <- ifelse(y01==1L, 1, -1)
-    n <- nrow(X_int); p <- ncol(X_int) - 1L
-    nvar <- 2*p + 2
-    id_tp <- 1:p; id_tm <- (p+1):(2*p); id_b0 <- 2*p+1; id_de <- 2*p+2
+    ypm <- ifelse(y01 == 1L, 1, -1)
+    n <- nrow(X_int)
+    p_loc <- ncol(X_int) - 1L
+    nvar <- 2 * p_loc + 2
+    id_tp <- 1:p_loc
+    id_tm <- (p_loc + 1):(2 * p_loc)
+    id_b0 <- 2 * p_loc + 1
+    id_de <- 2 * p_loc + 2
 
-    A <- list(); b <- c(); d <- c()
-    for (i in seq_len(n)){
+    A <- list()
+    b <- c()
+    d <- c()
+
+    for (i in seq_len(n)) {
       row <- numeric(nvar)
-      row[id_tp] <- - ypm[i] * X_int[i, -1, drop=FALSE]
-      row[id_tm] <- + ypm[i] * X_int[i, -1, drop=FALSE]
-      row[id_b0] <- + ypm[i]
-      row[id_de] <- + 1
-      A[[length(A)+1]] <- row; b <- c(b, 0); d <- c(d, "<=")
+      row[id_tp] <- -ypm[i] * X_int[i, -1, drop = FALSE]
+      row[id_tm] <-  ypm[i] * X_int[i, -1, drop = FALSE]
+      row[id_b0] <-  ypm[i]
+      row[id_de] <-  1
+      A[[length(A) + 1L]] <- row
+      b <- c(b, 0)
+      d <- c(d, "<=")
     }
-    row_le <- numeric(nvar); row_le[c(id_tp,id_tm)] <-  1
-    row_ge <- numeric(nvar); row_ge[c(id_tp,id_tm)] <- -1
-    A[[length(A)+1]] <- row_le; b <- c(b,  1); d <- c(d, "<=")
-    A[[length(A)+1]] <- row_ge; b <- c(b, -1); d <- c(d, "<=")
-    rowd <- numeric(nvar); rowd[id_de] <- -1
-    A[[length(A)+1]] <- rowd; b <- c(b, 0); d <- c(d, "<=")
+
+    row_le <- numeric(nvar)
+    row_ge <- numeric(nvar)
+    row_le[c(id_tp, id_tm)] <-  1
+    row_ge[c(id_tp, id_tm)] <- -1
+    A[[length(A) + 1L]] <- row_le; b <- c(b,  1); d <- c(d, "<=")
+    A[[length(A) + 1L]] <- row_ge; b <- c(b, -1); d <- c(d, "<=")
+
+    rowd <- numeric(nvar)
+    rowd[id_de] <- -1
+    A[[length(A) + 1L]] <- rowd; b <- c(b, 0); d <- c(d, "<=")
 
     A <- do.call(rbind, A)
-    obj <- numeric(nvar); obj[id_de] <- 1
+    obj <- numeric(nvar)
+    obj[id_de] <- 1
+
     res <- lpSolve::lp("max", obj, A, d, b)
-    if (res$status != 0) return(list(status="infeasible", delta_hat=NA_real_))
+    if (res$status != 0) {
+      return(list(status = "infeasible", delta_hat = NA_real_))
+    }
+
     list(
       status = if (res$objval > tau_complete) "complete" else "borderline",
       delta_hat = res$objval,
@@ -181,32 +282,51 @@ latent_separation <- function(
     )
   }
 
-  # Stage B: feasibility at delta=0
+  # ============================================================
+  # Stage B: feasibility at delta = 0
+  # ============================================================
   .lp_feasible_delta0 <- function(y01, X_int) {
-    ypm <- ifelse(y01==1L, 1, -1)
-    n <- nrow(X_int); p <- ncol(X_int) - 1L
-    nvar <- 2*p + 2
-    id_tp <- 1:p; id_tm <- (p+1):(2*p); id_b0 <- 2*p+1; id_de <- 2*p+2
+    ypm <- ifelse(y01 == 1L, 1, -1)
+    n <- nrow(X_int)
+    p_loc <- ncol(X_int) - 1L
+    nvar <- 2 * p_loc + 2
+    id_tp <- 1:p_loc
+    id_tm <- (p_loc + 1):(2 * p_loc)
+    id_b0 <- 2 * p_loc + 1
+    id_de <- 2 * p_loc + 2
 
-    A <- list(); b <- c(); d <- c()
-    for (i in seq_len(n)){
+    A <- list()
+    b <- c()
+    d <- c()
+
+    for (i in seq_len(n)) {
       row <- numeric(nvar)
-      row[id_tp] <- - ypm[i] * X_int[i, -1, drop=FALSE]
-      row[id_tm] <- + ypm[i] * X_int[i, -1, drop=FALSE]
-      row[id_b0] <- + ypm[i]
-      row[id_de] <- + 1
-      A[[length(A)+1]] <- row; b <- c(b, 0); d <- c(d, "<=")
+      row[id_tp] <- -ypm[i] * X_int[i, -1, drop = FALSE]
+      row[id_tm] <-  ypm[i] * X_int[i, -1, drop = FALSE]
+      row[id_b0] <-  ypm[i]
+      row[id_de] <-  1
+      A[[length(A) + 1L]] <- row
+      b <- c(b, 0)
+      d <- c(d, "<=")
     }
-    row_le <- numeric(nvar); row_le[c(id_tp,id_tm)] <-  1
-    row_ge <- numeric(nvar); row_ge[c(id_tp,id_tm)] <- -1
-    A[[length(A)+1]] <- row_le; b <- c(b,  1); d <- c(d, "<=")
-    A[[length(A)+1]] <- row_ge; b <- c(b, -1); d <- c(d, "<=")
-    rowd <- numeric(nvar); rowd[id_de] <- -1
-    A[[length(A)+1]] <- rowd; b <- c(b, 0); d <- c(d, "<=")
-    row1 <- numeric(nvar); row1[id_de] <- +1
-    row2 <- numeric(nvar); row2[id_de] <- -1
-    A[[length(A)+1]] <- row1; b <- c(b, 0); d <- c(d, "<=")
-    A[[length(A)+1]] <- row2; b <- c(b, 0); d <- c(d, "<=")
+
+    row_le <- numeric(nvar)
+    row_ge <- numeric(nvar)
+    row_le[c(id_tp, id_tm)] <-  1
+    row_ge[c(id_tp, id_tm)] <- -1
+    A[[length(A) + 1L]] <- row_le; b <- c(b,  1); d <- c(d, "<=")
+    A[[length(A) + 1L]] <- row_ge; b <- c(b, -1); d <- c(d, "<=")
+
+    rowd <- numeric(nvar)
+    rowd[id_de] <- -1
+    A[[length(A) + 1L]] <- rowd; b <- c(b, 0); d <- c(d, "<=")
+
+    row1 <- numeric(nvar)
+    row2 <- numeric(nvar)
+    row1[id_de] <-  1
+    row2[id_de] <- -1
+    A[[length(A) + 1L]] <- row1; b <- c(b, 0); d <- c(d, "<=")
+    A[[length(A) + 1L]] <- row2; b <- c(b, 0); d <- c(d, "<=")
 
     A <- do.call(rbind, A)
     obj0 <- numeric(nvar)
@@ -214,48 +334,76 @@ latent_separation <- function(
     list(feasible = (res$status == 0))
   }
 
+  # ============================================================
   # Severity LP: K_relax
+  # ============================================================
   .lp_multivar_severity <- function(y01, X_int, eps = 1e-3) {
-    ypm <- ifelse(y01==1L, 1, -1)
-    n <- nrow(X_int); p <- ncol(X_int) - 1L
-    nvar <- 2*p + 1 + n
-    id_tp <- 1:p; id_tm <- (p+1):(2*p); id_b0 <- 2*p+1; id_t <- (2*p+2):(2*p+1+n)
+    ypm <- ifelse(y01 == 1L, 1, -1)
+    n <- nrow(X_int)
+    p_loc <- ncol(X_int) - 1L
+    nvar <- 2 * p_loc + 1 + n
+    id_tp <- 1:p_loc
+    id_tm <- (p_loc + 1):(2 * p_loc)
+    id_b0 <- 2 * p_loc + 1
+    id_t <- (2 * p_loc + 2):(2 * p_loc + 1 + n)
 
-    A <- list(); b <- c(); d <- c()
-    for (i in seq_len(n)){
+    A <- list()
+    b <- c()
+    d <- c()
+
+    for (i in seq_len(n)) {
       row <- numeric(nvar)
-      row[id_tp] <- - ypm[i] * X_int[i, -1, drop=FALSE]
-      row[id_tm] <- + ypm[i] * X_int[i, -1, drop=FALSE]
-      row[id_b0] <- + ypm[i]
+      row[id_tp] <- -ypm[i] * X_int[i, -1, drop = FALSE]
+      row[id_tm] <-  ypm[i] * X_int[i, -1, drop = FALSE]
+      row[id_b0] <-  ypm[i]
       row[id_t[i]] <- -1
-      A[[length(A)+1]] <- row; b <- c(b, -eps); d <- c(d, "<=")
+      A[[length(A) + 1L]] <- row
+      b <- c(b, -eps)
+      d <- c(d, "<=")
     }
-    row_le <- numeric(nvar); row_le[c(id_tp,id_tm)] <-  1
-    row_ge <- numeric(nvar); row_ge[c(id_tp,id_tm)] <- -1
-    A[[length(A)+1]] <- row_le; b <- c(b,  1); d <- c(d, "<=")
-    A[[length(A)+1]] <- row_ge; b <- c(b, -1); d <- c(d, "<=")
-    for (i in seq_len(n)){
-      row <- numeric(nvar); row[id_t[i]] <- -1
-      A[[length(A)+1]] <- row; b <- c(b, 0); d <- c(d, "<=")
+
+    row_le <- numeric(nvar)
+    row_ge <- numeric(nvar)
+    row_le[c(id_tp, id_tm)] <-  1
+    row_ge[c(id_tp, id_tm)] <- -1
+    A[[length(A) + 1L]] <- row_le; b <- c(b,  1); d <- c(d, "<=")
+    A[[length(A) + 1L]] <- row_ge; b <- c(b, -1); d <- c(d, "<=")
+
+    for (i in seq_len(n)) {
+      row <- numeric(nvar)
+      row[id_t[i]] <- -1
+      A[[length(A) + 1L]] <- row
+      b <- c(b, 0)
+      d <- c(d, "<=")
     }
+
     A <- do.call(rbind, A)
-    obj <- numeric(nvar); obj[id_t] <- -1
+    obj <- numeric(nvar)
+    obj[id_t] <- -1
     res <- lpSolve::lp("max", obj, A, d, b)
-    if (res$status != 0) return(list(K_relax=Inf, sum_t=NA_real_))
+
+    if (res$status != 0) return(list(K_relax = Inf, sum_t = NA_real_))
+
     sum_t <- sum(res$solution[id_t])
     list(K_relax = ceiling(sum_t / eps), sum_t = sum_t)
   }
 
-  # ---- missing handling: global preprocessing if requested ----
+  # ============================================================
+  # Missing handling
+  # ============================================================
   global_mh <- NULL
   if (missing_scope == "global") {
-    global_mh <- .handle_missing_for_subset(
-      y = y_raw, X = X_raw,
-      method = missing, impute_args = impute_args
+    global_mh <- DISCO:::.handle_missing_for_subset(
+      y = y_raw,
+      X = X_raw,
+      method = missing,
+      impute_args = impute_args
     )
   }
 
-  # main per-subset runner
+  # ============================================================
+  # Main per-subset runner
+  # ============================================================
   run_one <- function(cols, mode_local = mode, compute_removed = TRUE) {
     mh <- if (!is.null(global_mh)) {
       list(
@@ -265,26 +413,32 @@ latent_separation <- function(
         params_used = global_mh$params_used
       )
     } else {
-      .handle_missing_for_subset(
+      DISCO:::.handle_missing_for_subset(
         y = y_raw,
         X = X_raw[, cols, drop = FALSE],
-        method = missing, impute_args = impute_args
+        method = missing,
+        impute_args = impute_args
       )
     }
 
-    y1 <- encode_outcome(mh$y)
+    y1 <- DISCO:::encode_outcome(mh$y)
     if (length(unique(y1)) < 2L) {
       return(list(
-        hit = FALSE, type = "no separation problem",
+        hit = FALSE,
+        type = "no separation problem",
         removed = NULL,
-        missing_info = list(method = mh$params_used$method, params = mh$params_used,
-                            rows_used = mh$rows_used, n_used = length(mh$rows_used),
-                            scope = missing_scope),
+        missing_info = list(
+          method = mh$params_used$method,
+          params = mh$params_used,
+          rows_used = mh$rows_used,
+          n_used = length(mh$rows_used),
+          scope = missing_scope
+        ),
         message = "Fewer than two outcome classes after missing-data handling."
       ))
     }
 
-    X1_mm <- encode_predictors_lp(mh$X)
+    X1_mm <- DISCO:::encode_predictors_lp(mh$X)
     if (isTRUE(scale_X)) X1_mm <- scale(X1_mm)
 
     Xi <- cbind("(Intercept)" = 1, as.matrix(X1_mm))
@@ -295,14 +449,23 @@ latent_separation <- function(
     maxd <- .lp_max_delta(y01, Xi, tau_complete = tau_complete)
     if (identical(maxd$status, "complete")) {
       return(list(
-        hit = (mode_local %in% c("either","perfect")),
+        hit = (mode_local %in% c("either", "perfect")),
         type = "perfect separation",
         removed = NULL,
-        diagnostics = list(perfect=TRUE, quasi=FALSE, delta_hat=maxd$delta_hat,
-                           K_relax=0L, n=n),
-        missing_info = list(method = mh$params_used$method, params = mh$params_used,
-                            rows_used = mh$rows_used, n_used = length(mh$rows_used),
-                            scope = missing_scope),
+        diagnostics = list(
+          perfect = TRUE,
+          quasi = FALSE,
+          delta_hat = maxd$delta_hat,
+          K_relax = 0L,
+          n = n
+        ),
+        missing_info = list(
+          method = mh$params_used$method,
+          params = mh$params_used,
+          rows_used = mh$rows_used,
+          n_used = length(mh$rows_used),
+          scope = missing_scope
+        ),
         message = "Perfect separation found on the given predictors."
       ))
     }
@@ -325,10 +488,12 @@ latent_separation <- function(
     quasi_flag <- (feas$feasible && is.finite(Krel) && (Krel < quasi_to_none_if * n))
     perfect_flag <- FALSE
 
-    is_hit <- switch(mode_local,
-                     "perfect" = perfect_flag,
-                     "quasi"   = (quasi_flag && !perfect_flag),
-                     "either"  = (perfect_flag || quasi_flag))
+    is_hit <- switch(
+      mode_local,
+      "perfect" = perfect_flag,
+      "quasi"   = (quasi_flag && !perfect_flag),
+      "either"  = (perfect_flag || quasi_flag)
+    )
 
     if (!is_hit) {
       available <- character(0)
@@ -339,16 +504,29 @@ latent_separation <- function(
         hit = FALSE,
         type = "no separation problem",
         removed = NULL,
-        diagnostics = list(perfect=perfect_flag,
-                           quasi=(feas$feasible && (Krel < quasi_to_none_if * n)),
-                           delta_hat=maxd$delta_hat, K_relax=Krel, n=n),
-        missing_info = list(method = mh$params_used$method, params = mh$params_used,
-                            rows_used = mh$rows_used, n_used = length(mh$rows_used),
-                            scope = missing_scope),
+        diagnostics = list(
+          perfect = perfect_flag,
+          quasi = (feas$feasible && (Krel < quasi_to_none_if * n)),
+          delta_hat = maxd$delta_hat,
+          K_relax = Krel,
+          n = n
+        ),
+        missing_info = list(
+          method = mh$params_used$method,
+          params = mh$params_used,
+          rows_used = mh$rows_used,
+          n_used = length(mh$rows_used),
+          scope = missing_scope
+        ),
         message = if (length(available)) {
-          sprintf("Separation exists (%s), but it does not satisfy mode = \"%s\".",
-                  paste(available, collapse = " & "), mode_local)
-        } else "No separation problem detected."
+          sprintf(
+            "Separation exists (%s), but it does not satisfy mode = \"%s\".",
+            paste(available, collapse = " & "),
+            mode_local
+          )
+        } else {
+          "No separation problem detected."
+        }
       ))
     }
 
@@ -356,17 +534,28 @@ latent_separation <- function(
       hit = TRUE,
       type = if (perfect_flag) "perfect separation" else "quasi-complete separation",
       removed = if (perfect_flag) NULL else removed,
-      diagnostics = list(perfect=perfect_flag, quasi=!perfect_flag,
-                         delta_hat=maxd$delta_hat, K_relax=Krel, n=n),
-      missing_info = list(method = mh$params_used$method, params = mh$params_used,
-                          rows_used = mh$rows_used, n_used = length(mh$rows_used),
-                          scope = missing_scope),
+      diagnostics = list(
+        perfect = perfect_flag,
+        quasi = !perfect_flag,
+        delta_hat = maxd$delta_hat,
+        K_relax = Krel,
+        n = n
+      ),
+      missing_info = list(
+        method = mh$params_used$method,
+        params = mh$params_used,
+        rows_used = mh$rows_used,
+        n_used = length(mh$rows_used),
+        scope = missing_scope
+      ),
       message = if (perfect_flag) {
         "Perfect separation found on the given predictors."
       } else {
         if (length(removed)) {
-          sprintf("Quasi-complete separation (latent). K_relax = %d; removing any of {%s} yields perfect (diagnostic).",
-                  Krel, paste(removed, collapse = ", "))
+          sprintf(
+            "Quasi-complete separation (latent). K_relax = %d; removing any of {%s} yields perfect (diagnostic).",
+            Krel, paste(removed, collapse = ", ")
+          )
         } else {
           sprintf("Quasi-complete separation (latent). K_relax = %d.", Krel)
         }
@@ -374,7 +563,79 @@ latent_separation <- function(
     )
   }
 
-  # === Single-set path ===
+  # ============================================================
+  # Cache
+  # ============================================================
+  subset_cache <- new.env(parent = emptyenv())
+
+  subset_key <- function(cols, mode_local, compute_removed) {
+    paste0(
+      paste(sort(cols), collapse = ","),
+      "|mode=", mode_local,
+      "|removed=", as.integer(isTRUE(compute_removed))
+    )
+  }
+
+  run_one_cached <- function(cols, mode_local = mode, compute_removed = FALSE) {
+    key <- subset_key(cols, mode_local, compute_removed)
+    if (exists(key, envir = subset_cache, inherits = FALSE)) {
+      return(get(key, envir = subset_cache, inherits = FALSE))
+    }
+    ans <- run_one(cols, mode_local = mode_local, compute_removed = compute_removed)
+    assign(key, ans, envir = subset_cache)
+    ans
+  }
+
+  candidate_score <- function(out) {
+    dg <- out$diagnostics %||% list()
+    Krel <- dg$K_relax %||% Inf
+    dhat <- dg$delta_hat %||% -Inf
+
+    if (identical(mode, "perfect")) {
+      return(c(-dhat))
+    }
+
+    c(Krel, -dhat)
+  }
+
+  keep_all_ties_at_cutoff <- function(hit_records, beam_width) {
+    if (!length(hit_records)) {
+      return(integer(0))
+    }
+
+    score_mat <- do.call(
+      rbind,
+      lapply(hit_records, function(z) candidate_score(z$out))
+    )
+
+    if (is.vector(score_mat)) {
+      score_mat <- matrix(score_mat, ncol = length(candidate_score(hit_records[[1]]$out)))
+    }
+
+    ord <- do.call(order, as.data.frame(score_mat))
+
+    if (length(ord) <= beam_width) {
+      return(ord)
+    }
+
+    cutoff_pos <- beam_width
+    cutoff_score <- score_mat[ord[cutoff_pos], , drop = FALSE]
+
+    same_as_cutoff <- apply(score_mat, 1, function(x) {
+      isTRUE(all.equal(as.numeric(x), as.numeric(cutoff_score), tolerance = 0))
+    })
+
+    keep_pool <- ord[seq_len(cutoff_pos)]
+    tied_extra <- setdiff(which(same_as_cutoff), keep_pool)
+
+    keep_idx <- c(keep_pool, tied_extra)
+    keep_idx <- ord[ord %in% keep_idx]
+    keep_idx
+  }
+
+  # ============================================================
+  # Single-set path
+  # ============================================================
   if (!test_combinations && !find_minimal) {
     cols_all <- seq_len(p)
     res <- run_one(cols_all, if (only_perfect) "perfect" else mode)
@@ -390,10 +651,15 @@ latent_separation <- function(
           satisfied = FALSE,
           available_types = available,
           removed = NULL,
-          message = if (!is.null(res$message)) res$message else
-            sprintf("Separation exists (%s), but it does not satisfy mode = \"%s\".",
-                    paste(available, collapse = " & "),
-                    if (isTRUE(only_perfect)) "perfect" else mode),
+          message = if (!is.null(res$message)) {
+            res$message
+          } else {
+            sprintf(
+              "Separation exists (%s), but it does not satisfy mode = \"%s\".",
+              paste(available, collapse = " & "),
+              if (isTRUE(only_perfect)) "perfect" else mode
+            )
+          },
           missing_info = res$missing_info,
           diagnostics = res$diagnostics %||% list(
             K_relax = NA_real_,
@@ -430,7 +696,9 @@ latent_separation <- function(
     ))
   }
 
-  # === Exhaustive enumeration ===
+  # ============================================================
+  # Full exhaustive enumeration by size
+  # ============================================================
   if (test_combinations && !find_minimal) {
     results <- list()
     for (k in seq.int(min_vars, p)) {
@@ -448,13 +716,17 @@ latent_separation <- function(
         }
       }
     }
-    if (only_perfect) results <- Filter(function(z) identical(z$type, "perfect separation"), results)
+    if (only_perfect) {
+      results <- Filter(function(z) identical(z$type, "perfect separation"), results)
+    }
     return(results)
   }
 
-  # === Minimal-subset search ===
+  # ============================================================
+  # Minimal-subset search
+  # ============================================================
   if (find_minimal) {
-    full_res <- run_one(seq_len(p), mode, compute_removed = FALSE)
+    full_res <- run_one_cached(seq_len(p), mode, compute_removed = FALSE)
     if (!isTRUE(full_res$hit)) {
       vcat("minimal search: early stop because full predictor set is not a hit under mode = \"%s\".", mode)
       return(list(minimal_subsets = list()))
@@ -472,20 +744,27 @@ latent_separation <- function(
     progress_every <- as.integer(getOption("latent_separation.progress_every", 200L))
     if (is.na(progress_every) || progress_every <= 0L) progress_every <- 200L
 
-    vcat("minimal search: strategy=%s, p=%d, min_vars=%d, eval_limit=%s",
-         minimal_strategy, p, min_vars, if (is.finite(eval_limit)) eval_limit else "Inf")
+    vcat(
+      "minimal search: strategy=%s, p=%d, min_vars=%d, eval_limit=%s",
+      minimal_strategy, p, min_vars,
+      if (is.finite(eval_limit)) eval_limit else "Inf"
+    )
 
     tick_progress <- function(hits_count, best_k) {
       if (!show_progress) return(invisible(NULL))
       if (eval_count %% progress_every == 0L) {
-        message(sprintf("minimal search: strategy=%s, evaluated=%d, hits=%d, best_k=%s",
-                        minimal_strategy, eval_count, hits_count,
-                        if (is.finite(best_k)) best_k else "Inf"))
+        message(sprintf(
+          "minimal search: strategy=%s, evaluated=%d, hits=%d, best_k=%s",
+          minimal_strategy, eval_count, hits_count,
+          if (is.finite(best_k)) best_k else "Inf"
+        ))
       }
       invisible(NULL)
     }
 
-    # ---- Forward minimal ----
+    # ------------------------------------------------------------
+    # Forward minimal
+    # ------------------------------------------------------------
     if (minimal_strategy == "forward") {
       minimal <- list()
       minimal_idx <- list()
@@ -500,6 +779,7 @@ latent_separation <- function(
 
       for (k in seq.int(min_vars, max_vars)) {
         if (k > best_k) break
+
         for (cols in combn(p, k, simplify = FALSE)) {
           if (contains_any_minimal(cols)) next
 
@@ -511,13 +791,13 @@ latent_separation <- function(
           }
           tick_progress(hits_count, best_k)
 
-          out_fast <- run_one(cols, mode, compute_removed = FALSE)
+          out_fast <- run_one_cached(cols, mode, compute_removed = FALSE)
           if (!isTRUE(out_fast$hit)) next
 
           best_k <- min(best_k, k)
           hits_count <- hits_count + 1L
 
-          out <- run_one(cols, mode, compute_removed = TRUE)
+          out <- run_one_cached(cols, mode, compute_removed = TRUE)
           nm <- paste(var_names[cols], collapse = "_")
           minimal[[nm]] <- list(
             type = out$type,
@@ -529,152 +809,289 @@ latent_separation <- function(
             strategy = "forward",
             eval_count = eval_count
           )
+
           minimal_idx[[length(minimal_idx) + 1L]] <- cols
 
           if (isTRUE(stop_at_first)) return(list(minimal_subsets = minimal))
         }
+
         if (eval_count > eval_limit) break
       }
+
       return(list(minimal_subsets = minimal))
     }
 
-    # ---- Backward minimal ----
-    if (!isTRUE(backward_exhaustive)) {
-      current <- seq_len(p)
-      improved <- TRUE
+    # ------------------------------------------------------------
+    # Backward search
+    # ------------------------------------------------------------
+    if (minimal_strategy == "backward") {
       hits_count <- 0L
 
-      while (improved) {
-        improved <- FALSE
-        for (j in current) {
-          candidate <- setdiff(current, j)
-          if (length(candidate) < min_vars) next
+      frontier <- list(list(
+        cols = seq_len(p),
+        out = full_res
+      ))
 
+      best_layer <- frontier
+      best_k <- p
+
+      if (!isTRUE(backward_exhaustive)) {
+        vcat(
+          "backward beam: starting from full set, k=%d, beam_width=%d (soft cutoff with ties), mode=%s",
+          p, beam_width, mode
+        )
+
+        repeat {
+          current_k <- length(frontier[[1L]]$cols)
+          if (current_k <= min_vars) {
+            vcat("backward beam: stop because current_k=%d reached min_vars=%d.", current_k, min_vars)
+            break
+          }
+
+          candidate_map <- new.env(parent = emptyenv())
+
+          # layer idea: only generate from previous-layer hits
+          for (node in frontier) {
+            parent_cols <- node$cols
+            for (j in parent_cols) {
+              child <- setdiff(parent_cols, j)
+              if (length(child) < min_vars) next
+              if (length(child) > max_vars) next
+              key <- paste(child, collapse = ",")
+              if (!exists(key, envir = candidate_map, inherits = FALSE)) {
+                assign(key, child, envir = candidate_map)
+              }
+            }
+          }
+
+          cand_keys <- ls(candidate_map, all.names = TRUE)
+          if (!length(cand_keys)) {
+            vcat("backward beam: no candidates generated from current frontier.")
+            break
+          }
+
+          vcat(
+            "backward beam: layer k=%d -> k=%d generated %d unique candidates before evaluation.",
+            current_k, current_k - 1L, length(cand_keys)
+          )
+
+          hit_records <- list()
+
+          # deduplicate first, then evaluate
+          for (key in cand_keys) {
+            eval_count <- eval_count + 1L
+            if (eval_count > eval_limit) {
+              warning("Reached evaluation limit in backward beam search; results may be incomplete.")
+              vcat("backward beam: stopped at eval_limit=%s.", as.character(eval_limit))
+              break
+            }
+
+            tick_progress(hits_count, best_k)
+
+            cols <- get(key, envir = candidate_map, inherits = FALSE)
+            out_fast <- run_one_cached(cols, mode, compute_removed = FALSE)
+
+            if (!isTRUE(out_fast$hit)) next
+
+            hits_count <- hits_count + 1L
+            hit_records[[length(hit_records) + 1L]] <- list(
+              key = key,
+              cols = cols,
+              out = out_fast
+            )
+          }
+
+          if (eval_count > eval_limit) break
+
+          if (!length(hit_records)) {
+            vcat(
+              "backward beam: no hits at next layer k=%d, stop. Final best_k=%d.",
+              current_k - 1L, best_k
+            )
+            break
+          }
+
+          keep_idx <- keep_all_ties_at_cutoff(hit_records, beam_width)
+          frontier <- hit_records[keep_idx]
+          best_layer <- frontier
+          best_k <- length(frontier[[1L]]$cols)
+
+          vcat(
+            "backward beam: retained %d hit(s) at k=%d for next frontier.",
+            length(frontier), best_k
+          )
+        }
+
+        minimal <- list()
+
+        for (node in best_layer) {
+          cols <- node$cols
+          out <- run_one_cached(cols, mode, compute_removed = TRUE)
+          nm <- paste(var_names[cols], collapse = "_")
+          minimal[[nm]] <- list(
+            type = out$type,
+            vars = var_names[cols],
+            idx = cols,
+            removed = out$removed,
+            missing_info = out$missing_info,
+            diagnostics = out$diagnostics,
+            strategy = "backward_beam",
+            beam_width = beam_width,
+            tie_policy = "keep_all_at_cutoff",
+            k = length(cols),
+            eval_count = eval_count
+          )
+        }
+
+        vcat(
+          "backward beam: returning %d hit(s) at best_k=%d.",
+          length(minimal),
+          if (length(minimal)) unique(vapply(minimal, function(z) z$k, integer(1)))[1L] else NA_integer_
+        )
+
+        return(list(
+          minimal_subsets = minimal,
+          best_k = if (length(minimal)) unique(vapply(minimal, function(z) z$k, integer(1)))[1L] else NA_integer_,
+          beam_width = beam_width,
+          tie_policy = "keep_all_at_cutoff",
+          eval_count = eval_count
+        ))
+      }
+
+      # ----------------------------------------------------------
+      # Backward layered exhaustive
+      # ----------------------------------------------------------
+      vcat(
+        "backward layered exhaustive: starting from full set, k=%d, mode=%s",
+        p, mode
+      )
+
+      repeat {
+        current_k <- length(frontier[[1L]]$cols)
+        if (current_k <= min_vars) {
+          vcat("backward layered exhaustive: stop because current_k=%d reached min_vars=%d.", current_k, min_vars)
+          break
+        }
+
+        candidate_map <- new.env(parent = emptyenv())
+
+        # layer idea: only generate from previous-layer hits
+        # and keep ALL hits at next layer
+        for (node in frontier) {
+          parent_cols <- node$cols
+          for (j in parent_cols) {
+            child <- setdiff(parent_cols, j)
+            if (length(child) < min_vars) next
+            if (length(child) > max_vars) next
+            key <- paste(child, collapse = ",")
+            if (!exists(key, envir = candidate_map, inherits = FALSE)) {
+              assign(key, child, envir = candidate_map)
+            }
+          }
+        }
+
+        cand_keys <- ls(candidate_map, all.names = TRUE)
+        if (!length(cand_keys)) {
+          vcat("backward layered exhaustive: no candidates generated from current frontier.")
+          break
+        }
+
+        vcat(
+          "backward layered exhaustive: layer k=%d -> k=%d generated %d unique candidates before evaluation.",
+          current_k, current_k - 1L, length(cand_keys)
+        )
+
+        next_frontier <- list()
+
+        for (key in cand_keys) {
           eval_count <- eval_count + 1L
           if (eval_count > eval_limit) {
-            warning("Reached evaluation limit in backward greedy search; result may be incomplete.")
-            vcat("backward greedy: stopped at eval_limit=%s.", as.character(eval_limit))
-            improved <- FALSE
+            warning("Reached evaluation limit in backward layered exhaustive search; results may be incomplete.")
+            vcat("backward layered exhaustive: stopped at eval_limit=%s.", as.character(eval_limit))
             break
           }
-          tick_progress(hits_count, length(current))
 
-          out <- run_one(candidate, mode, compute_removed = FALSE)
-          if (isTRUE(out$hit)) {
-            current <- candidate
-            improved <- TRUE
-            hits_count <- hits_count + 1L
-            if (verbose) vcat("backward greedy: removed one variable, remaining k=%d.", length(current))
-            break
-          }
-        }
-      }
+          tick_progress(hits_count, best_k)
 
-      minimal_by_1 <- TRUE
-      for (j in current) {
-        cand2 <- setdiff(current, j)
-        if (length(cand2) < min_vars) next
+          cols <- get(key, envir = candidate_map, inherits = FALSE)
+          out_fast <- run_one_cached(cols, mode, compute_removed = FALSE)
 
-        eval_count <- eval_count + 1L
-        if (eval_count > eval_limit) {
-          minimal_by_1 <- NA
-          warning("Reached evaluation limit during minimality verification; minimal_by_1 is NA.")
-          vcat("backward greedy: minimality check stopped at eval_limit=%s.", as.character(eval_limit))
-          break
-        }
-        out2 <- run_one(cand2, mode, compute_removed = FALSE)
-        if (isTRUE(out2$hit)) {
-          minimal_by_1 <- FALSE
-          break
-        }
-      }
+          if (!isTRUE(out_fast$hit)) next
 
-      final_out <- run_one(current, mode, compute_removed = TRUE)
-      nm <- paste(var_names[current], collapse = "_")
-      minimal <- list()
-      minimal[[nm]] <- list(
-        type = final_out$type,
-        vars = var_names[current],
-        idx = current,
-        removed = final_out$removed,
-        missing_info = final_out$missing_info,
-        diagnostics = final_out$diagnostics,
-        strategy = "backward_greedy",
-        minimal_by_1 = minimal_by_1,
-        eval_count = eval_count
-      )
-      vcat("backward greedy: finished with k=%d, minimal_by_1=%s.", length(current), as.character(minimal_by_1))
-      return(list(minimal_subsets = minimal))
-    }
-
-    # ---- Backward exhaustive ----
-    minimal <- list()
-    best_hits <- list()
-    best_k <- NA_integer_
-    hits_count <- 0L
-
-    for (k in seq.int(p - 1L, min_vars, by = -1L)) {
-      hits_at_k <- list()
-
-      vcat("backward exhaustive: scanning k=%d (choose(%d,%d) subsets).", k, p, k)
-
-      for (cols in combn(p, k, simplify = FALSE)) {
-        eval_count <- eval_count + 1L
-        if (eval_count > eval_limit) {
-          warning("Reached evaluation limit in backward exhaustive search; results may be incomplete.")
-          vcat("backward exhaustive: stopped at eval_limit=%s.", as.character(eval_limit))
-          break
-        }
-        tick_progress(hits_count, k)
-
-        out_fast <- run_one(cols, mode, compute_removed = FALSE)
-        if (isTRUE(out_fast$hit)) {
           hits_count <- hits_count + 1L
-          nm <- paste(var_names[cols], collapse = "_")
-          hits_at_k[[nm]] <- cols
-          if (isTRUE(stop_at_first)) break
+          next_frontier[[length(next_frontier) + 1L]] <- list(
+            key = key,
+            cols = cols,
+            out = out_fast
+          )
+
+          if (isTRUE(stop_at_first)) {
+            vcat("backward layered exhaustive: stop_at_first=TRUE, stopping at first hit in current layer.")
+            break
+          }
         }
-      }
 
-      if (eval_count > eval_limit) break
+        if (eval_count > eval_limit) break
 
-      if (length(hits_at_k)) {
-        best_hits <- hits_at_k
-        best_k <- k
-        vcat("backward exhaustive: found hits at k=%d (count=%d).", k, length(hits_at_k))
-        if (isTRUE(stop_at_first)) break
-      } else {
-        if (!is.na(best_k)) {
-          vcat("backward exhaustive: no hits at k=%d; minimal size confirmed as best_k=%d.", k, best_k)
+        if (isTRUE(stop_at_first) && length(next_frontier)) {
+          frontier <- next_frontier
+          best_layer <- frontier
+          best_k <- length(frontier[[1L]]$cols)
           break
         }
+
+        if (!length(next_frontier)) {
+          vcat(
+            "backward layered exhaustive: no hits at next layer k=%d, stop. Final best_k=%d.",
+            current_k - 1L, best_k
+          )
+          break
+        }
+
+        frontier <- next_frontier
+        best_layer <- frontier
+        best_k <- length(frontier[[1L]]$cols)
+
+        vcat(
+          "backward layered exhaustive: retained ALL %d hit(s) at k=%d for next frontier.",
+          length(frontier), best_k
+        )
       }
-    }
 
-    if (!length(best_hits)) {
-      vcat("backward exhaustive: no hits found under requested mode.")
-      return(list(minimal_subsets = list(), best_k = NA_integer_))
-    }
+      minimal <- list()
 
-    for (nm in names(best_hits)) {
-      cols <- best_hits[[nm]]
-      out <- run_one(cols, mode, compute_removed = TRUE)
-      minimal[[nm]] <- list(
-        type = out$type,
-        vars = var_names[cols],
-        idx = cols,
-        removed = out$removed,
-        missing_info = out$missing_info,
-        diagnostics = out$diagnostics,
-        strategy = "backward_exhaustive_all_at_min_k",
-        k = best_k,
-        eval_count = eval_count
+      for (node in best_layer) {
+        cols <- node$cols
+        out <- run_one_cached(cols, mode, compute_removed = TRUE)
+        nm <- paste(var_names[cols], collapse = "_")
+        minimal[[nm]] <- list(
+          type = out$type,
+          vars = var_names[cols],
+          idx = cols,
+          removed = out$removed,
+          missing_info = out$missing_info,
+          diagnostics = out$diagnostics,
+          strategy = "backward_layered_exhaustive",
+          k = length(cols),
+          eval_count = eval_count
+        )
+      }
+
+      vcat(
+        "backward layered exhaustive: returning %d hit(s) at best_k=%d.",
+        length(minimal),
+        if (length(minimal)) unique(vapply(minimal, function(z) z$k, integer(1)))[1L] else NA_integer_
       )
-    }
 
-    vcat("backward exhaustive: returning %d hits at best_k=%d.", length(minimal), best_k)
-    return(list(minimal_subsets = minimal, best_k = best_k))
+      return(list(
+        minimal_subsets = minimal,
+        best_k = if (length(minimal)) unique(vapply(minimal, function(z) z$k, integer(1)))[1L] else NA_integer_,
+        eval_count = eval_count,
+        exhaustive_type = "layered"
+      ))
+    }
   }
 
   stop("Unreachable state.")
 }
+

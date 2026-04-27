@@ -2,7 +2,7 @@
 % Please edit documentation in R/Latent_separation.R
 \name{latent_separation}
 \alias{latent_separation}
-\title{LP-based latent separation detection (with optional subset search)}
+\title{LP-based latent separation detection with optional subset search}
 \usage{
 latent_separation(
   y,
@@ -25,105 +25,172 @@ latent_separation(
   minimal_strategy = c("auto", "forward", "backward"),
   small_p_threshold = 15L,
   backward_exhaustive = FALSE,
+  beam_width = 10L,
   verbose = getOption("latent_separation.verbose", FALSE)
 )
 }
 \arguments{
-\item{y}{Binary outcome (0/1 or 2-level factor/character/logical).}
+\item{y}{Binary outcome, supplied as 0/1, a two-level factor, a two-level
+character vector, or a logical vector.}
 
-\item{X}{Matrix or data frame of predictors (columns = variables).}
+\item{X}{Matrix or data frame of predictors. Columns correspond to variables.}
 
-\item{test_combinations}{If TRUE, test every subset of size >= min_vars.}
+\item{test_combinations}{Logical. If \code{TRUE}, test all predictor subsets of
+size at least \code{min_vars}.}
 
-\item{min_vars}{Minimum subset size to consider (default 2).}
+\item{min_vars}{Minimum subset size to consider. Default is 2.}
 
-\item{epsilon}{Numeric scalar > 0. Legacy margin parameter; used as default for eps_boundary.}
+\item{epsilon}{Numeric scalar greater than 0. Legacy margin parameter; used
+as the default value for \code{eps_boundary} when \code{eps_boundary = NULL}.}
 
-\item{only_perfect}{Legacy flag for exhaustive mode (kept for compatibility).}
+\item{only_perfect}{Logical. Legacy flag for exhaustive mode. If \code{TRUE}, only
+perfect separation is returned.}
 
-\item{find_minimal}{If TRUE, return separating subsets based on strategy.}
+\item{find_minimal}{Logical. If \code{TRUE}, search for separating subsets using
+the strategy specified by \code{minimal_strategy}.}
 
-\item{mode}{One of "either", "perfect", or "quasi".}
+\item{mode}{Character string specifying the target separation type. One of
+\code{"either"}, \code{"perfect"}, or \code{"quasi"}.}
 
-\item{max_vars}{Optional upper bound on subset size (default all the way to p).}
+\item{max_vars}{Optional upper bound on subset size. Defaults to the total
+number of predictors.}
 
-\item{stop_at_first}{If TRUE, stop after the first minimal hit (forward or backward_exhaustive).}
+\item{stop_at_first}{Logical. If \code{TRUE}, stop after the first minimal hit in
+forward search or backward layered exhaustive search.}
 
-\item{missing}{How to treat missing data: "complete" or "impute".}
+\item{missing}{Character string specifying how missing data are handled. One
+of \code{"complete"} or \code{"impute"}.}
 
-\item{impute_args}{Optional list of imputation settings when missing="impute".}
+\item{impute_args}{Optional list of imputation settings used when
+\code{missing = "impute"}.}
 
-\item{scale_X}{Logical; if TRUE, standardize encoded predictors with scale().}
+\item{scale_X}{Logical. If \code{TRUE}, encoded predictors are standardized using
+\code{scale()}.}
 
-\item{tau_complete}{Threshold on delta_hat to declare complete separation. Default 1e-6.}
+\item{tau_complete}{Numeric threshold on \code{delta_hat} used to declare complete
+separation. Default is \code{1e-6}.}
 
-\item{eps_boundary}{Target margin delta for severity LP. If NULL, defaults to epsilon.}
+\item{eps_boundary}{Target margin delta for the severity LP. If \code{NULL}, it
+defaults to \code{epsilon}.}
 
-\item{quasi_to_none_if}{Numeric in (0,1]. If K_relax >= rho * n, quasi treated as none.}
+\item{quasi_to_none_if}{Numeric value in \verb{(0, 1]}. If
+\code{K_relax >= quasi_to_none_if * n}, quasi-complete separation is treated as
+no separation.}
 
-\item{missing_scope}{"global" or "subset". Default "global".}
+\item{missing_scope}{Character string specifying whether missing-data handling
+is applied globally or separately by subset. One of \code{"global"} or
+\code{"subset"}. Default is \code{"global"}.}
 
-\item{minimal_strategy}{"auto","forward","backward". Default "auto".}
+\item{minimal_strategy}{Character string specifying the minimal-subset search
+strategy. One of \code{"auto"}, \code{"forward"}, or \code{"backward"}. Default is
+\code{"auto"}.}
 
-\item{small_p_threshold}{Threshold used by minimal_strategy="auto". Default 15.}
+\item{small_p_threshold}{Integer threshold used by
+\code{minimal_strategy = "auto"}. Forward search is used when
+\code{p <= small_p_threshold}; backward search is used otherwise. Default is 15.}
 
-\item{backward_exhaustive}{If TRUE and strategy is backward, enumerate by size. Default FALSE.}
+\item{backward_exhaustive}{Logical. If \code{TRUE} and
+\code{minimal_strategy = "backward"}, perform layered exhaustive backward search
+instead of beam-style backward search. Default is \code{FALSE}.}
 
-\item{verbose}{Logical; if TRUE, print progress messages during minimal-subset search.
-Defaults to getOption("latent_separation.verbose", FALSE).}
+\item{beam_width}{Positive integer controlling the number of best separating
+subsets retained at each layer in beam-style backward search. Ties at the
+cutoff are retained. Default is 10.}
+
+\item{verbose}{Logical. If \code{TRUE}, print progress messages and stop reasons
+during minimal-subset search. Defaults to
+\code{getOption("latent_separation.verbose", FALSE)}.}
 }
 \value{
+In single-set mode, a list with fields:
 \itemize{
-\item Single-set mode: list with fields type, satisfied, available_types, removed, message,
-missing_info, diagnostics.
-\item Exhaustive mode: named list of hits with type, vars, removed, missing_info, diagnostics.
-\item Minimal mode: list with $minimal_subsets, each entry containing type, vars, idx, removed,
-missing_info, diagnostics plus strategy metadata.
+\item \code{type}: detected separation type or no-separation label.
+\item \code{satisfied}: logical indicator for whether the requested mode is satisfied.
+\item \code{available_types}: separation types available under the fitted diagnostics.
+\item \code{removed}: diagnostic row indices for quasi-complete separation.
+\item \code{message}: human-readable summary.
+\item \code{missing_info}: information about missing-data handling.
+\item \code{diagnostics}: LP diagnostics including \code{delta_hat}, \code{K_relax}, and \code{n}.
 }
+
+In exhaustive mode, a named list of separating subsets. Each entry contains:
+\itemize{
+\item \code{type}: separation type.
+\item \code{vars}: predictor names in the separating subset.
+\item \code{removed}: diagnostic row indices for quasi-complete separation.
+\item \code{missing_info}: information about missing-data handling.
+\item \code{diagnostics}: LP diagnostics.
+}
+
+In minimal mode, a list with \code{minimal_subsets}. Each entry contains:
+\itemize{
+\item \code{type}: separation type.
+\item \code{vars}: predictor names in the subset.
+\item \code{idx}: column indices of the subset.
+\item \code{removed}: diagnostic row indices for quasi-complete separation.
+\item \code{missing_info}: information about missing-data handling.
+\item \code{diagnostics}: LP diagnostics.
+\item strategy metadata such as \code{strategy}, \code{k}, \code{beam_width},
+\code{tie_policy}, and \code{eval_count}, depending on the search strategy.
+}
+
+For backward beam search, the returned object may also include \code{best_k},
+\code{beam_width}, \code{tie_policy}, and \code{eval_count}.
+
+For backward layered exhaustive search, the returned object may also include
+\code{best_k}, \code{eval_count}, and \code{exhaustive_type}.
 }
 \description{
-Detects latent (complete or quasi-complete) separation for a binary outcome
-using linear programming in the multivariate space.
+Detects latent complete or quasi-complete separation for a binary outcome
+using linear programming in the multivariate predictor space.
 }
 \details{
-Two-stage pipeline:
-Stage A: max-margin LP with L1 equality normalization to identify complete separation
-Stage B: severity LP to compute multivariate severity lower bound K_relax
+The method uses a two-stage LP pipeline.
 
-Notes:
-\itemize{
-\item Quasi is treated as non-substantive and labeled no separation when
-K_relax / n is large (default quasi_to_none_if = 0.5) to reduce false positives.
-\item Legacy row-deletion diagnostic for quasi is kept (removed indices), but does not
-drive the quasi decision.
-}
+Stage A solves a max-margin linear program with L1 equality normalization
+to identify complete separation.
 
-Missingness handling across subsets:
-\itemize{
-\item missing_scope = "global" (recommended): missing handling is done once on full X,
-then reused for every subset so rows are fixed across subset evaluations.
-\item missing_scope = "subset": missing handling is done per subset (legacy behavior).
-}
+Stage B solves a severity linear program to compute the multivariate
+severity lower bound, \code{K_relax}, for quasi-complete separation.
 
-Minimal subset search strategies:
-\itemize{
-\item minimal_strategy = "forward": enumerate increasing subset sizes (can be expensive)
-\item minimal_strategy = "backward": scalable greedy backward elimination by default
-\item minimal_strategy = "auto": forward if p <= small_p_threshold else backward
-\item backward_exhaustive = TRUE: enumerate subsets by decreasing size p-1, p-2, ...
-respecting eval_limit, can be expensive for moderate/large p.
-}
+Quasi-complete separation is treated as non-substantive and labeled as
+no separation when \code{K_relax / n} is large. By default, this threshold is
+controlled by \code{quasi_to_none_if = 0.5}. This rule is intended to reduce
+false positives from weak or non-substantive quasi-complete separation.
 
-Runtime controls for minimal search:
-\itemize{
-\item options(latent_separation.eval_limit = N)
-\item options(latent_separation.progress_every = M)
-}
+A legacy row-deletion diagnostic for quasi-complete separation is retained.
+The returned \code{removed} indices indicate observations whose deletion would
+yield complete separation, but these indices do not determine the quasi
+decision.
 
-Progress reporting:
-\itemize{
-\item verbose = TRUE prints progress updates and key stop reasons for minimal-subset search.
-\item For advanced control, you can also use options(latent_separation.show_progress = TRUE/FALSE),
-but verbose is the recommended user-facing switch.
-}
+Missing data can be handled either globally or separately within each
+subset evaluation. With \code{missing_scope = "global"}, missing-data handling is
+performed once on the full predictor set, and the resulting fixed sample is
+reused for every subset. This is the recommended setting when comparing
+different predictor subsets. With \code{missing_scope = "subset"}, missing-data
+handling is performed separately for each subset, which preserves the legacy
+behavior but may evaluate different subsets on different samples.
+
+Minimal subset search is controlled by \code{minimal_strategy}. The \code{"forward"}
+strategy enumerates subsets in increasing size and returns minimal separating
+subsets, but it can be computationally expensive. The \code{"backward"} strategy
+starts from the full predictor set and removes predictors layer by layer.
+By default, backward search uses a beam-style search controlled by
+\code{beam_width}, retaining the best separating subsets at each layer. Ties at
+the beam cutoff are retained. If \code{backward_exhaustive = TRUE}, backward
+search instead performs layered exhaustive search, keeping all separating
+subsets at each layer, subject to the evaluation limit. The \code{"auto"} strategy
+uses forward search when \code{p <= small_p_threshold} and backward search
+otherwise.
+
+Runtime can be controlled with:
+
+\code{options(latent_separation.eval_limit = N)}
+
+\code{options(latent_separation.progress_every = M)}
+
+Progress reporting can be enabled with \code{verbose = TRUE}. This prints progress
+updates and key stopping reasons during minimal-subset search. Advanced users
+may also use \code{options(latent_separation.show_progress = TRUE/FALSE)}, but
+\code{verbose} is the recommended user-facing switch.
 }
