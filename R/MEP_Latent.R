@@ -1,6 +1,6 @@
-#' Severity-Adaptive MEP for Pure Latent (multi-predictor) Logistic
+#' MEP for Pure Latent (multi-predictor) Logistic
 #'
-#' Fits a logistic regression model with a Multivariate Exponential Power (MEP) prior
+#' Fits a logistic regression model with a multivariate Exponential Power prior
 #' using a random-walk Metropolis-Hastings (RW-MH) sampler and performs a small grid
 #' search over prior settings \eqn{(\mu, \Sigma, \kappa)}. Predictors are encoded
 #' (via \code{model.matrix}) and then z-scored internally for fitting using a safe scaler.

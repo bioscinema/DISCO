@@ -1,10 +1,10 @@
-#' Severity-Adaptive MEP for Mixture (multi-predictor) Logistic
+#' MEP for Mixture (multi-predictor) Logistic
 #'
-#' Fits a multi-predictor logistic model with a Multivariate Exponential Power (MEP)
-#' prior using a Random-Walk Metropolis-Hastings (RW-MH) sampler. Slope prior scales
+#' Fits a multi-predictor logistic model with a multivariate Exponential Power prior
+#' using a Random-Walk Metropolis-Hastings (RW-MH) sampler. Slope prior scales
 #' are anchored by univariate DISCO severities computed on the modeling data.
 #' A small grid over intercept prior mean offsets, a global multiplier on slope scales,
-#' and the EP shape kappa is explored. One run is selected using an acceptance-rate window,
+#' and the shape is explored. One run is selected using an acceptance-rate window,
 #' posterior predictive agreement, and (when available) closeness to GLM coefficient ratios
 #' relative to a reference predictor.
 #'
@@ -58,8 +58,8 @@
 #' @param geweke_z_threshold Maximum abs Geweke z allowed for single-chain diagnostics (requires coda). Default 2.
 #'
 #' @return A list with:
-#'   \item \code{best_settings}: list with chosen \code{mu} (string), \code{Sigma_diag} (string), chosen \code{kappa},
-#'         , \code{kappa_mode}, \code{acceptance_rate}, and \code{prop_matched}.
+#'   - \code{best_settings}: list with chosen \code{mu} (string), \code{Sigma_diag} (string), chosen \code{kappa},
+#'   \code{kappa_mode}, \code{acceptance_rate}, and \code{prop_matched}.
 #'   - posterior_means, scaled_summary, standardized_coefs_back
 #'   - diagnostics_single (if n_chains==1) or diagnostics_multiple (if n_chains>=2) when coda is available
 #'   - burnin_step_trace_best, step_size_final_best

@@ -14,13 +14,14 @@ Imports:
     clue,
     overlapping,
     rlang,
-    stats
+    stats,
+    gt,
+    lpSolve
 Suggests:
     testthat (>= 3.0.0),
     knitr,
     rmarkdown,
-    coda,
-    gt
+    coda
 Config/testthat/edition: 3
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.3.3
+Config/roxygen2/version: 8.0.0

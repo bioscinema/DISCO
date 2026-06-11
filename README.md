@@ -3,7 +3,7 @@
 
 >DIagnosis of Separation in Logistic Regression: detect perfect and quasi-complete separation in binary outcomes with a clear severity score and traceable summaries.
 
->Correction of Odds-Ratio Inflation: stabilize estimates under separation using Bayesian framework.
+>Correction of Odds-Ratio Inflation: stabilize estimates under separation using Multi-adaptive Exponential Power Procedure (MEP).
 ---
 
 ## Why separation matters
@@ -220,7 +220,7 @@ fit_std <- MEP_Univariate(
   data = df, predictor = "x", outcome = "y"
 )
 fit_std$posterior
-fit_logit$diagnostics_single
+fit_std$diagnostics_single
 
 ## 2) Back-transform slope to ORIGINAL-x units on the LOGIT scale
 fit_logit <- MEP_Univariate(

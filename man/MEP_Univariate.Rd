@@ -2,7 +2,7 @@
 % Please edit documentation in R/MEP_Univariate.R
 \name{MEP_Univariate}
 \alias{MEP_Univariate}
-\title{Univariate Multiple adaptive Exponential power procedure Bayes with DISCO severity (MEP_Univariate)}
+\title{MEP for Univariate Logistic}
 \usage{
 MEP_Univariate(
   data,
@@ -117,8 +117,8 @@ A list with components:
 }
 \description{
 Runs a DISCO-based univariate separation diagnostic, constructs a
-Multiple adaptive Exponential power procedure prior from the severity score,
-and fits a univariate logistic model (intercept plus one predictor) via
+Exponential Power prior from the severity score,
+and fits a univariate logistic model via
 random-walk Metropolis-Hastings (RW-MH).
 }
 \details{
