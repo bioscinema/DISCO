@@ -1,12 +1,21 @@
 #' MEP for Mixture (multi-predictor) Logistic
 #'
-#' Fits a multi-predictor logistic model with a multivariate Exponential Power prior
-#' using a Random-Walk Metropolis-Hastings (RW-MH) sampler. Slope prior scales
-#' are anchored by univariate DISCO severities computed on the modeling data.
-#' A small grid over intercept prior mean offsets, a global multiplier on slope scales,
-#' and the shape is explored. One run is selected using an acceptance-rate window,
-#' posterior predictive agreement, and (when available) closeness to GLM coefficient ratios
-#' relative to a reference predictor.
+#' Local-plus-global MEP fit for mixture separation
+#'
+#' Fits a multi-predictor logistic model with a multivariate Exponential Power prior using a
+#' Random-Walk Metropolis-Hastings (RW-MH) sampler. This branch computes predictor-specific
+#' DISCO univariate severities and maps them to local diagonal scatter anchors and local
+#' shape anchors. A global multiplier grid then rescales the local slope scatter anchors,
+#' while the global shape grid is formed by adding \code{kappa_delta} offsets to the average
+#' severity-derived shape anchor. Mixture/latent classification itself is assumed to have been
+#' established outside this function; latent severity does not directly enter the numerical
+#' hyperparameter mapping here.
+#'
+#' Arguments whose names begin with \code{sigma2_} refer to diagonal scatter quantities
+#' used to build \eqn{\Sigma}. The \code{sigma2_global_multipliers} values are dimensionless
+#' multipliers, not direct slope diagonal entries. Posterior grid selection continues to use
+#' posterior means for backward compatibility; \code{posterior_point} controls only the final
+#' user-facing point summary.
 #'
 #' Complete-case only. This function assumes inputs are complete; it stops if any NA
 #' appears in y or X.
@@ -28,11 +37,15 @@
 #'
 #' @param mu_intercept_offsets Numeric vector of offsets added to logit(mean(y)) for intercept prior mean grid.
 #'   Default seq(-1, 1, by = 0.2).
-#' @param sigma0_intercept Prior sd for the intercept (logit scale). Default 10.
-#' @param sigma_global_multipliers Numeric vector of global multipliers applied to all slope prior scales.
-#'   Default c(0.1, 0.5, 1, 2, 5, 10).
-#' @param sigma_hi Slope prior sd under mild separation (s=0). Default 5.
-#' @param sigma_lo Slope prior sd under severe separation (s=1). Default 0.15.
+#' @param sigma2_intercept Intercept diagonal scatter entry placed directly in \eqn{\Sigma}. Default 10.
+#' @param sigma2_global_multipliers Numeric vector of dimensionless global multipliers applied to the
+#'   predictor-specific slope scatter anchors. Default c(0.1, 0.5, 1, 2, 5, 10).
+#' @param sigma2_hi Slope diagonal scatter anchor under mild separation (s=0). Default 5.
+#' @param sigma2_lo Slope diagonal scatter anchor under severe separation (s=1). Default 0.15.
+#' @param posterior_point Point summary to expose as \code{Estimate}: \code{"mean"} or \code{"median"}.
+#'   Both posterior mean and median are always returned. Default \code{"mean"}.
+#' @param sigma0_intercept,sigma_global_multipliers,sigma_hi,sigma_lo Deprecated backward-compatible aliases.
+#'   Supplied values are used directly, preserving the previous numerical parameterization.
 #' @param kappa_min,kappa_max EP shape at s=0 and s=1. Defaults 1 and 2.5.
 #' @param kappa_delta Offsets around anchor-average kappa to form the grid.
 #'   Default seq(-0.5, 0.5, by = 0.2), truncated to \code{[0.5, 3]}.
@@ -60,7 +73,7 @@
 #' @return A list with:
 #'   - \code{best_settings}: list with chosen \code{mu} (string), \code{Sigma_diag} (string), chosen \code{kappa},
 #'   \code{kappa_mode}, \code{acceptance_rate}, and \code{prop_matched}.
-#'   - posterior_means, scaled_summary, standardized_coefs_back
+#'   - posterior_means, posterior_medians, posterior_estimates, scaled_summary, standardized_coefs_back
 #'   - diagnostics_single (if n_chains==1) or diagnostics_multiple (if n_chains>=2) when coda is available
 #'   - burnin_step_trace_best, step_size_final_best
 #'   - draws (optional)
@@ -102,10 +115,11 @@ MEP_mixture <- function(
     init_beta = 0.01,
     step_size = 0.40,
     mu_intercept_offsets = seq(-1, 1, by = 0.2),
-    sigma0_intercept = 10,
-    sigma_global_multipliers = c(0.1, 0.5, 1, 2, 5, 10),
-    sigma_hi = 5,
-    sigma_lo = 0.15,
+    sigma2_intercept = 10,
+    sigma2_global_multipliers = c(0.1, 0.5, 1, 2, 5, 10),
+    sigma2_hi = 5,
+    sigma2_lo = 0.15,
+    posterior_point = c("mean","median"),
     kappa_min = 1,
     kappa_max = 2.5,
     kappa_delta = seq(-0.5, 0.5, by = 0.2),
@@ -123,11 +137,43 @@ MEP_mixture <- function(
     tune_threshold_lo = 0.20,
     tune_interval = 1000,
     ess_threshold = 150,
-    geweke_z_threshold = 2
+    geweke_z_threshold = 2,
+    sigma0_intercept = NULL,
+    sigma_global_multipliers = NULL,
+    sigma_hi = NULL,
+    sigma_lo = NULL
 ) {
 
   transform_back <- base::match.arg(as.character(transform_back), choices = c("none","logit","SAS","Long"))
   combine_chains <- base::match.arg(as.character(combine_chains), choices = c("stack","none"))
+  posterior_point <- base::match.arg(as.character(posterior_point), choices = c("mean","median"))
+
+  if (!is.null(sigma0_intercept)) {
+    warning("`sigma0_intercept` is deprecated; use `sigma2_intercept`.", call. = FALSE)
+    sigma2_intercept <- sigma0_intercept
+  }
+  if (!is.null(sigma_global_multipliers)) {
+    warning("`sigma_global_multipliers` is deprecated; use `sigma2_global_multipliers`.", call. = FALSE)
+    sigma2_global_multipliers <- sigma_global_multipliers
+  }
+  if (!is.null(sigma_hi)) {
+    warning("`sigma_hi` is deprecated; use `sigma2_hi`.", call. = FALSE)
+    sigma2_hi <- sigma_hi
+  }
+  if (!is.null(sigma_lo)) {
+    warning("`sigma_lo` is deprecated; use `sigma2_lo`.", call. = FALSE)
+    sigma2_lo <- sigma_lo
+  }
+  if (!is.numeric(sigma2_intercept) || length(sigma2_intercept) != 1L || !is.finite(sigma2_intercept) || sigma2_intercept <= 0) {
+    stop("`sigma2_intercept` must be a finite positive scalar.", call. = FALSE)
+  }
+  if (!is.numeric(sigma2_global_multipliers) || length(sigma2_global_multipliers) < 1L || any(!is.finite(sigma2_global_multipliers)) || any(sigma2_global_multipliers <= 0)) {
+    stop("`sigma2_global_multipliers` must contain positive finite values.", call. = FALSE)
+  }
+  if (!is.numeric(sigma2_hi) || length(sigma2_hi) != 1L || !is.finite(sigma2_hi) || sigma2_hi <= 0 ||
+      !is.numeric(sigma2_lo) || length(sigma2_lo) != 1L || !is.finite(sigma2_lo) || sigma2_lo <= 0) {
+    stop("`sigma2_hi` and `sigma2_lo` must be finite positive scalars.", call. = FALSE)
+  }
 
   if (!is.numeric(burn_in) || length(burn_in) != 1 || burn_in < 0) stop("`burn_in` must be >= 0.", call. = FALSE)
   if (!is.numeric(n_iter) || length(n_iter) != 1 || n_iter < 1) stop("`n_iter` must be >= 1.", call. = FALSE)
@@ -214,15 +260,15 @@ MEP_mixture <- function(
   ref_pos_enc <- 1 + ref_enc_cols[1]  # position in full beta
 
   map_uni_severity <- function(s) {
-    sigma <- exp((1 - s) * log(sigma_hi) + s * log(sigma_lo))
+    sigma2_anchor <- exp((1 - s) * log(sigma2_hi) + s * log(sigma2_lo))
     kappa_anchor <- kappa_min + s * (kappa_max - kappa_min)
-    list(sigma = sigma, kappa_anchor = kappa_anchor)
+    list(sigma2_anchor = sigma2_anchor, kappa_anchor = kappa_anchor)
   }
 
   anchors <- lapply(sev_vec, map_uni_severity)
-  sigma_anchor_terms <- vapply(anchors, function(a) a$sigma, numeric(1))
+  sigma2_anchor_terms <- vapply(anchors, function(a) a$sigma2_anchor, numeric(1))
   kappa_anchor_mean  <- mean(vapply(anchors, function(a) a$kappa_anchor, numeric(1)))
-  sigma_anchor_enc <- sigma_anchor_terms[assign_mm]
+  sigma2_anchor_enc <- sigma2_anchor_terms[assign_mm]
 
   # grids
   mu0 <- stats::qlogis(pmin(pmax(mean(y), 1e-6), 1 - 1e-6))
@@ -233,10 +279,10 @@ MEP_mixture <- function(
   })
 
   build_sigma <- function(global_mult) {
-    d <- c(sigma0_intercept, pmax(1e-6, sigma_anchor_enc * global_mult))
+    d <- c(sigma2_intercept, pmax(1e-6, sigma2_anchor_enc * global_mult))
     diag(d, nrow = p_all, ncol = p_all)
   }
-  Sigma_list <- lapply(sigma_global_multipliers, build_sigma)
+  Sigma_list <- lapply(sigma2_global_multipliers, build_sigma)
   kappa_grid <- pmax(0.5, pmin(3.0, kappa_anchor_mean + kappa_delta))
 
   # helpers
@@ -260,12 +306,16 @@ MEP_mixture <- function(
   summarize_post <- function(post, X_enc_mat, ci_level#, ci_levels_for_stars
                              ) {
     pm <- colMeans(post)
+    pmed <- apply(post, 2, stats::median)
+    pest <- if (posterior_point == "mean") pm else pmed
     sdv <- apply(post, 2, stats::sd)
     ci_main <- qfun_mat(post, ci_level)
 
     scaled_summary <- data.frame(
       Param = colnames(post),
+      Estimate = pest,
       Mean = pm,
+      Median = pmed,
       SD = sdv,
       CI_low = ci_main[, 1],
       CI_high = ci_main[, 2],
@@ -297,7 +347,10 @@ MEP_mixture <- function(
 
     summarise_slopes <- function(M) {
       ci <- qfun_mat(M, ci_level)
-      data.frame(Mean = colMeans(M), CI_low = ci[, 1], CI_high = ci[, 2])
+      mn <- colMeans(M)
+      md <- apply(M, 2, stats::median)
+      est <- if (posterior_point == "mean") mn else md
+      data.frame(Estimate = est, Mean = mn, Median = md, CI_low = ci[, 1], CI_high = ci[, 2])
     }
 
     out_scaled <- summarise_slopes(slopes_scaled)
@@ -307,16 +360,24 @@ MEP_mixture <- function(
 
     standardized_coefs_back <- data.frame(
       Predictor = colnames(X_enc_mat),
-      Scaled = out_scaled$Mean,
+      Scaled = out_scaled$Estimate,
+      Scaled_Mean = out_scaled$Mean,
+      Scaled_Median = out_scaled$Median,
       Scaled_CI_low = out_scaled$CI_low,
       Scaled_CI_high = out_scaled$CI_high,
-      b_A_original = out_A$Mean,
+      b_A_original = out_A$Estimate,
+      b_A_Mean = out_A$Mean,
+      b_A_Median = out_A$Median,
       b_A_CI_low = out_A$CI_low,
       b_A_CI_high = out_A$CI_high,
-      b_SAS_original = out_SAS$Mean,
+      b_SAS_original = out_SAS$Estimate,
+      b_SAS_Mean = out_SAS$Mean,
+      b_SAS_Median = out_SAS$Median,
       b_SAS_CI_low = out_SAS$CI_low,
       b_SAS_CI_high = out_SAS$CI_high,
-      b_Long_original = out_Long$Mean,
+      b_Long_original = out_Long$Estimate,
+      b_Long_Mean = out_Long$Mean,
+      b_Long_Median = out_Long$Median,
       b_Long_CI_low = out_Long$CI_low,
       b_Long_CI_high = out_Long$CI_high,
       row.names = NULL,
@@ -325,6 +386,8 @@ MEP_mixture <- function(
 
     list(
       posterior_means = pm,
+      posterior_medians = pmed,
+      posterior_estimates = pest,
       scaled_summary = scaled_summary,
       standardized_coefs_back = standardized_coefs_back
     )
@@ -605,7 +668,10 @@ MEP_mixture <- function(
       acceptance_rate = best_acceptance,
       prop_matched = best_prop_matched
     ),
+    posterior_point = posterior_point,
     posterior_means = sum_final$posterior_means,
+    posterior_medians = sum_final$posterior_medians,
+    posterior_estimates = sum_final$posterior_estimates,
     standardized_coefs_back = sum_final$standardized_coefs_back,
     scaled_summary = sum_final$scaled_summary,
     burnin_step_trace_best = lapply(best_chains, `[[`, "burnin_step_trace"),

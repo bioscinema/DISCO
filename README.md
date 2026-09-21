@@ -30,9 +30,11 @@
   - optionally print progress and stop reasons during minimal subset search with `verbose = TRUE`
 
 ### Estimation Correction
-- `MEP_Univariate()` — DISCO-severity-adaptive **univariate** logistic regression with an **MEP** prior; standardized X for **severity & fit**, optional back-transforms (logit / SAS / Long), and a GLM comparator on standardized X.
-- `MEP_latent()` — **unified latent** (numeric **+ factor** support via `model.matrix`): handles missingness **once** on raw `y, X`, encodes factors (treatment; baseline = first level), **safe-scales encoded columns**, runs a small grid over $(\mu, \sigma_{\text{global}}, \kappa)$, and selects one run via acceptance-window + GLM-ratio closeness + posterior predictive agreement. Reports working-scale summaries **with CIs** and back-transformed **b_A / b_SAS / b_Long** **(per encoded column)** with CIs.
-- `MEP_mixture()` — **severity-anchored multi-predictor** logistic with **numeric + factor** predictors. Encodes factors via `model.matrix(~ ., data = X)`, anchors slope prior scales by **per-predictor DISCO severities** (numeric severities computed on z-scores; factors unchanged for severity step), runs a small grid (intercept mean offsets, global slope multipliers, κ), and selects one run via acceptance window + checks. Reports posterior **means** on the standardized scale and optional back-transformed **A / SAS / Long** **means** per encoded column.
+- `MEP_Univariate()` — direct diagnosis-guided **univariate** MEP. The function runs `uni_separation()` internally, maps the resulting severity score directly to the slope diagonal scatter entry and the EP shape parameter, and fits the model without a hyperparameter grid search.
+- `MEP_latent()` — global-grid MEP for **pure latent separation**. Pure latent separation is assumed to have been diagnosed before calling the function. Encoded slopes share a common diagonal scatter entry selected from `sigma2_slope_grid`, while the function searches over prior location, the common slope scatter entry, and `kappa`.
+- `MEP_mixture()` — local-plus-global MEP for **mixture separation**. The function computes predictor-specific univariate severities, maps them to local slope scatter and shape anchors, then searches over a global scatter multiplier and a global `kappa` grid around the average shape anchor. Mixture/latent classification is assumed to have been established before calling the function.
+
+**MEP parameterization.** In the estimation functions, arguments beginning with `sigma2_` refer to diagonal scatter quantities used to construct the MEP scatter matrix \(\Sigma\). These quantities are placed directly into \(\Sigma\); they should not generally be interpreted as marginal prior variances when \(\kappa \neq 1\). `posterior_point = "mean"` is the default in all three functions. Both posterior means and medians are always returned, and `posterior_point = "median"` changes the final reported point estimate without changing the latent/mixture grid-selection rule.
 
 ---
 
@@ -184,23 +186,43 @@ options(latent_separation.progress_every = 200)
 
 ## Univariate Issue — `MEP_Univariate`
 
-`MEP_Univariate()` fits **intercept + one predictor** logistic regression with a **severity-adaptive MEP prior** informed by `uni_separation()`. It uses a random-walk MH sampler with light auto-tuning.
+`MEP_Univariate()` fits an **intercept + one predictor** logistic regression using the direct diagnosis-guided MEP strategy for univariate separation. It runs `uni_separation()` internally, maps the resulting severity score directly to the slope diagonal scatter entry and the EP shape parameter, and then fits the model by RW-MH. **No hyperparameter grid search is performed in this branch.**
 
-Numeric predictors are z-scored for severity, GLM comparator, and the Bayesian fit; 2-level factors are converted to 0/1 for estimation/comparator (error if >2 levels).
+Numeric predictors are z-scored for severity, the GLM comparator, and the Bayesian fit; 2-level factors are converted to 0/1 for estimation/comparison (error if >2 levels).
 
-**Defaults (match SLURM script):**
--`burn_in = 5000`, `n_iter = 15000` 
+The scatter matrix is
+
+\[
+\Sigma = \operatorname{diag}(\sigma_0^2,\sigma_1^2),
+\]
+
+where the user-facing `sigma2_*` arguments are the diagonal scatter entries placed directly into \(\Sigma\).
+
+**Current defaults**
+- `burn_in = 5000`, `n_iter = 15000`
 - Proposal s.d. blend: `step = 0.30*(1-severity) + 0.12*severity`
-- Prior scales: `sigma0 = 10`, `sigma1_hi = 5`, `sigma1_lo = 0.15`
+- `sigma2_intercept = 100`
+- `sigma2_hi = 25`, `sigma2_lo = 0.0225`
+- Severity-adaptive slope scatter:
+  \[
+  \log(\sigma_1^2)=(1-s)\log(25)+s\log(0.0225)
+  \]
 - Shape blend: `kappa = 1 + severity*(2.5 - 1)`
-- `ci_level = 0.95`, MH auto-tuning during burn-in (`tune_threshold_hi = 0.45`, `tune_threshold_lo = 0.20`, `tune_interval = 500`)
+- `posterior_point = "mean"`; `"median"` may be used for the final point estimate
+- `ci_level = 0.95`
+- MH auto-tuning during burn-in: `tune_threshold_hi = 0.45`, `tune_threshold_lo = 0.20`, `tune_interval = 500`
 - `compare = TRUE` fits a GLM comparator on standardized X
+- `return_draws = TRUE`
+
+The current `sigma2_*` defaults are numerically equivalent to the earlier SD-style defaults `sigma0 = 10`, `sigma1_hi = 5`, and `sigma1_lo = 0.15`. The old names remain available as deprecated backward-compatible aliases and are squared internally.
 
 **Output**
-- `posterior`: summaries for **standardized** `beta1` only. If `transform_beta1 ∈ {logit, SAS, Long}`, also includes the corresponding slope on the original predictor scale (`beta1_logit` or `beta1_SAS` or `beta1_Long`).
-- `disco`: severity metadata (`separation_type`, `severity_score`, `boundary_threshold`, `single_tie_boundary`, `missing_info` including `rows_used`).
-- `prior`, `mcmc` (including burn-in step-size trace), `comparators$glm` (coefficients on standardized X), `rows_used`.
-- If `return_draws = TRUE`, returns `draws$chain_std` and `draws$chain_orig`.
+- `posterior_point`: selected point-summary rule (`"mean"` or `"median"`).
+- `posterior_means`, `posterior_medians`, `posterior_estimates`: posterior point summaries for intercept and slope on the working scale.
+- `posterior`: summary for standardized `beta1`; columns include `Estimate`, `Mean`, `Median`, `SD`, `CI_low`, `CI_high`, `Sig_0`, and `Star`. If `transform_beta` is one of `"logit"`, `"SAS"`, or `"Long"`, the corresponding slope on the original predictor scale is also returned.
+- `disco`: severity metadata (`separation_type`, `severity_score`, `boundary_threshold`, `single_tie_boundary`, and missing-data information).
+- `prior`, `mcmc`, `comparators$glm`, and `rows_used`.
+- If `return_draws = TRUE`, `draws$chain_std` and `draws$chain_orig` are returned.
 
 **Reproducibility**
 For reproducible chains, pass explicit `chain_seeds`. If `chain_seeds` is `NULL`, random seeds are generated.
@@ -213,96 +235,79 @@ x <- c(-0.52, -0.07, -0.60, -0.67, 1.39, 0.16, 1.40, 0.09)
 df <- data.frame(y = y, x = x)
 
 detect <- DISCO::uni_separation(df, predictor = "x", outcome = "y")
-detect$separation_type # e.g., "Perfect separation"
+detect$separation_type
 
-## 1) Default: STANDARDIZED coefficients for predictor
-fit_std <- MEP_Univariate(
-  data = df, predictor = "x", outcome = "y"
-)
+## 1) Default: posterior mean on the standardized coefficient scale
+fit_std <- MEP_Univariate(data = df, predictor = "x", outcome = "y")
 fit_std$posterior
-fit_std$diagnostics_single
 
-## 2) Back-transform slope to ORIGINAL-x units on the LOGIT scale
+## 2) Use posterior median as the reported point estimate
+fit_med <- MEP_Univariate(
+  data = df, predictor = "x", outcome = "y",
+  posterior_point = "median"
+)
+fit_med$posterior
+
+## 3) Back-transform slope to original-x units on the logit scale
 fit_logit <- MEP_Univariate(
   data = df, predictor = "x", outcome = "y",
   transform_beta = "logit"
 )
 fit_logit$posterior
-fit_logit$diagnostics_single
 
-## 3) Multiple chains
+## 4) Multiple chains
 fit_multi <- MEP_Univariate(
   data = df, predictor = "x", outcome = "y",
   n_chains = 4,
   chain_seeds = c(101, 102, 103, 104),
   combine_chains = "stack"
 )
-fit_multi$posterior
 fit_multi$diagnostics_multi
 ```
 
 ---
 
-## Unified Latent Issue — `MEP_latent`
+## Pure Latent Issue — `MEP_latent()`
 
-`MEP_latent()` fits **intercept + one predictor + covariates** logistic regression. 
+`MEP_latent()` is the global-grid MEP implementation for **pure latent separation**. Pure latent separation is assumed to have been diagnosed before calling this function; the function does not compute or numerically use `K_relax` or another latent severity score. Because this branch does not use predictor-specific univariate severity for localized shrinkage, all encoded slopes share a common diagonal scatter entry selected from a global grid.
 
+The function searches over prior location, a common slope scatter entry, and `kappa`, then selects one grid point using the acceptance-rate criterion, GLM coefficient-ratio closeness when available, and posterior predictive agreement.
 
-**What it does**
-- **Encodes factors** in `X` with `model.matrix(~ ., data = X)` (treatment contrasts, baseline = first level), drops the intercept, and fits on the **numeric encoded** design.
-- Standardizes encoded predictors with a **safe scaler** (sd set to 1 when sd=0 or non-finite).
-- For each grid setting, runs RW-MH and computes acceptance rate, posterior summaries, and a posterior predictive match statistic.
-- **Selects one grid point using** by: (i) acceptance-rate window, (ii) closeness to a GLM coefficient-ratio reference (same standardized working scale), and (iii) posterior predictive agreement.
-- Reruns the selected grid point using chains and returns final summaries.
+**Current parameterization and defaults**
+- `mu_vals = seq(-1, 1, by = 0.1)`; for each candidate `m`, the current implementation uses `mu = rep(m, p_all)`.
+- `sigma2_intercept = 10`.
+- `sigma2_slope_grid = c(0.1, 0.5, 1, 2, 5, 10)`; each candidate is placed directly into every slope diagonal entry of \(\Sigma\).
+- `kappa_mode = "auto"` by default with `kappa_vals = c(0.5, 1, 2)`; alternatively `kappa_mode = "fixed"` uses `kappa_fixed` (default `1`).
+- `burn_in = 1000`, `n_iter = 9000`, `step_size = 0.40`.
+- Grid acceptance window `c(0.30, 0.40)` with fallback target `0.35`.
+- `ppc_threshold = 0.80`.
+- `posterior_point = "mean"`; `"median"` may be used for the final user-facing point estimate.
+- Grid selection remains based on posterior means for backward compatibility; changing `posterior_point` does not change the selected grid point.
 
-**Factor handling & encoded names**
-- **Numeric predictors** appear as a single encoded column with their original name (e.g., `X3`).
-- **Factors** expand to treatment-contrast dummies (baseline = first level). For a 2-level factor `G` with levels `A` (baseline) and `B`, the encoded column is `GB` (effect **B vs A**). Change the baseline beforehand with `stats::relevel()`.
-- All reported effects are **per encoded column**.
+The previous names `sigma0_intercept` and `sigma_global_multipliers` remain available as deprecated aliases. In the latent branch, the former `sigma_global_multipliers` values were already used directly as candidate slope diagonal scatter entries, so `sigma2_slope_grid` is the more accurate name.
+
+**Factor handling and encoded names**
+- Factors are encoded using `model.matrix(~ ., data = X)` with treatment contrasts and the first level as baseline.
+- Numeric predictors remain one encoded column with their original name.
+- Encoded predictor columns are internally standardized with a safe scaler.
+- All reported slope effects are per encoded column.
 
 **Back-transforms**
-- Let \(s_x\) be the SD of an encoded column (numeric or 0/1 dummy) on the encoded `X` scale, and \(\beta_\text{std}\) the slope in the standardized design. We report:
-  - `b_A_original  = β_std / s_x` (per-unit effect on encoded scale),
-  - `b_SAS_original  = b_A_original * π/√3`,
-  - `b_Long_original = b_A_original * (π/√3 + 1)`.
-  For a 0/1 dummy with prevalence \(p\), \(s_x = \sqrt{p(1-p)}\).
+Let \(s_x\) be the SD of an encoded column and \(\beta_{std}\) the slope in the standardized design. The function reports:
+- `b_A_original = beta_std / s_x`
+- `b_SAS_original = b_A_original * pi/sqrt(3)`
+- `b_Long_original = b_A_original * (pi/sqrt(3) + 1)`
+
+For a 0/1 dummy with prevalence \(p\), \(s_x=\sqrt{p(1-p)}\).
 
 **Returns**
-
-- `best_settings`: list with the selected prior setting  
-  - `mu`: prior mean vector (stored as a comma-separated string)  
-  - `Sigma_diag`: diagonal of the prior scale matrix (stored as a comma-separated string)  
-  - `kappa`: selected EP shape parameter  
-  - `kappa_mode`: `"auto"` or `"fixed"`
-  - `acceptance_rate`: mean MH acceptance rate across best-point rerun chains  
-  - `prop_matched`: mean posterior predictive match statistic across best-point rerun chains  
-
-- `posterior_means`: posterior means for all parameters on the working scale  
-  - order matches `scaled_summary$Param` (Intercept, then encoded columns)
-
-- `scaled_summary`: working-scale posterior summary table (includes Intercept)  
-  - columns: `Param`, `Mean`, `SD`, `CI_low`, `CI_high`, `Sig`, `Star`
-
-- `standardized_coefs_back`: per encoded predictor-column effects with uncertainty  
-  - `Predictor`: encoded column name (from `model.matrix`)  
-  - `Scaled`, `Scaled_CI_low`, `Scaled_CI_high`: slope on standardized-design scale  
-  - `b_A_original`, `b_A_CI_low`, `b_A_CI_high`: per-unit effect on encoded scale  
-  - `b_SAS_original`, `b_SAS_CI_low`, `b_SAS_CI_high`: SAS rescaling  
-  - `b_Long_original`, `b_Long_CI_low`, `b_Long_CI_high`: Long rescaling
-
-- `burnin_step_trace_best`: list of length `n_chains`  
-  - each element is a data.frame with columns `iter`, `acceptance`, `step_size` recording burn-in tuning checkpoints
-
-- `step_size_final_best`: numeric vector of length `n_chains` with the final tuned step sizes
-
-- Diagnostics (only when `coda` is available)  
-  - if `n_chains == 1`: `diagnostics_single` with `ess`, `geweke_z`, `ess_min`, `geweke_max_abs`, `converged`  
-  - if `n_chains >= 2`: `diagnostics_multiple` with `rhat`, `rhat_max`, `ess`, `ess_min`
-
-- `draws` (optional, when `return_draws = TRUE`)  
-  - if `n_chains == 1`: a matrix of post-burn draws (rows = iterations, cols = parameters)  
-  - if `n_chains >= 2`: a list of length `n_chains`, each a post-burn draw matrix
-
+- `best_settings`: selected prior location, `Sigma_diag`, `kappa`, `kappa_mode`, acceptance rate, and posterior predictive match statistic.
+- `posterior_point`, `posterior_means`, `posterior_medians`, `posterior_estimates`.
+- `scaled_summary`: `Param`, `Estimate`, `Mean`, `Median`, `SD`, `CI_low`, `CI_high`, `Sig`, `Star`.
+- `standardized_coefs_back`: selected estimate, mean, median, and credible interval for the standardized slope and each back-transformed scale.
+- `burnin_step_trace_best`, `step_size_final_best`.
+- `diagnostics_single` or `diagnostics_multiple` when `coda` is available.
+- `draws` when `return_draws = TRUE`.
 
 **Examples**
 
@@ -310,20 +315,27 @@ fit_multi$diagnostics_multi
 y <- c(0,0,0,0, 1,1,1,1)
 X <- data.frame(
   X1 = c(-1.86, -0.81,  1.32, -0.40,  0.91,  2.49,  0.34,  0.25),
-  X2 = c( 0.52,  -0.07,  0.60,  0.67, -1.39,  0.16, -1.40, -0.09)
+  X2 = c( 0.52, -0.07,  0.60,  0.67, -1.39,  0.16, -1.40, -0.09)
 )
 
-## Single Chain
+## Single chain
 fit_single <- MEP_latent(
   y, X,
   n_chains = 1,
-  chain_seed = 9
+  chain_seeds = 9
 )
 fit_single$scaled_summary
 fit_single$diagnostics_single
 
+## Posterior median as the reported point estimate
+fit_median <- MEP_latent(
+  y, X,
+  posterior_point = "median",
+  chain_seeds = 9
+)
+fit_median$scaled_summary
 
-## Multiple Chains
+## Multiple chains
 fit_multi <- MEP_latent(
   y, X,
   n_chains = 4,
@@ -332,42 +344,58 @@ fit_multi <- MEP_latent(
   return_draws = TRUE
 )
 fit_multi$scaled_summary
-fit_multi$diagnostics_multi
-
+fit_multi$diagnostics_multiple
 ```
 
 ---
 
-## Mixture Issue — `MEP_mixture()` 
+## Mixture Issue — `MEP_mixture()`
 
-`MEP_mixture()` fits a multi-predictor logistic regression with an MEP prior where slope prior scales are anchored by per-predictor DISCO severities.
+`MEP_mixture()` is the local-plus-global MEP implementation for **mixture separation**. Mixture/latent classification is assumed to have been established before calling the function. The function computes predictor-specific univariate DISCO severities internally and uses them to construct local slope scatter anchors and local shape anchors. A global multiplier grid then rescales the local slope scatter anchors, while the global shape grid is formed from offsets around the average severity-derived shape anchor.
 
+Latent severity does **not** directly enter the numerical hyperparameter mapping in this function.
+
+**Current parameterization and defaults**
+- Intercept prior mean grid: `logit(mean(y)) + mu_intercept_offsets`, where `mu_intercept_offsets = seq(-1, 1, by = 0.2)`; slope prior means are zero.
+- `sigma2_intercept = 10`.
+- Local scatter anchors: `sigma2_hi = 5`, `sigma2_lo = 0.15`.
+- For predictor severity \(s_j\):
+  \[
+  \log(\sigma_{j,anchor}^2)=(1-s_j)\log(5)+s_j\log(0.15).
+  \]
+- `sigma2_global_multipliers = c(0.1, 0.5, 1, 2, 5, 10)`; these are **dimensionless multipliers**, not direct slope diagonal entries. The actual slope scatter entry is `sigma2_anchor * global_multiplier`.
+- Shape anchors: `kappa_min = 1`, `kappa_max = 2.5`.
+- `kappa_delta = seq(-0.5, 0.5, by = 0.2)`, giving offsets `{-0.5, -0.3, -0.1, 0.1, 0.3, 0.5}` around the mean shape anchor, truncated to `[0.5, 3]`.
+- `burn_in = 1000`, `n_iter = 9000`, `step_size = 0.40`.
+- Grid acceptance window `c(0.30, 0.40)` with fallback target `0.35`.
+- `ppc_threshold = 0.80`.
+- `posterior_point = "mean"`; `"median"` may be used for the final user-facing point estimate.
+- Grid selection remains based on posterior means for backward compatibility; changing `posterior_point` does not change the selected grid point.
+
+The previous names `sigma0_intercept`, `sigma_global_multipliers`, `sigma_hi`, and `sigma_lo` remain available as deprecated aliases and preserve the previous numerical parameterization.
 
 **What it does**
-- Checks `y` and `X` are complete-case and compatible.
-- Encodes factors using `model.matrix(~ ., data = X)` (treatment coding; baseline is the first level) and drops the intercept.
-- Computes univariate DISCO severity for each original predictor (numeric predictors are z-scored for the severity step).
-- Maps severity to anchor slope prior scales and an anchor-average `kappa`.
-- Runs a small grid over intercept prior mean offsets, global slope multipliers, and `kappa`, then selects one grid point using an acceptance-rate window, posterior predictive agreement, and (when available) GLM ratio closeness relative to a reference predictor.
-- Reruns the selected grid point using `n_chains` chains and returns final summaries.
-
-**Factor handling and encoded names**
-- Numeric predictors remain one encoded column with their original name.
-- Factors expand to treatment-contrast dummies (baseline is the first level). For a two-level factor `X3` with levels `A` (baseline) and `B`, the encoded column is `X3B` (effect `B` vs `A`).
+- Requires complete `y` and `X` inputs.
+- Encodes factors with `model.matrix(~ ., data = X)` using treatment coding with the first level as baseline.
+- Computes univariate DISCO severity for each original predictor; numeric predictors are z-scored for the severity step.
+- Maps each severity to a local diagonal scatter anchor and a local `kappa` anchor.
+- Applies each candidate global scatter multiplier to the local anchors.
+- Forms the global `kappa` grid around the average severity-derived shape anchor.
+- Selects one grid point using the acceptance-rate criterion, posterior predictive agreement, and GLM ratio closeness when available.
+- Reruns the selected grid point using `n_chains` chains.
 
 **Returns**
-- `ref_predictor`, `severity`, `grid_summary`
-- `best_settings`: selected grid setting, including `acceptance_rate` and `prop_matched`
-- `posterior_means`
-- `scaled_summary`
-- `standardized_coefs_back`
-- `burnin_step_trace_best`, `step_size_final_best`
-- Diagnostics (only when `coda` is available):
-  - `diagnostics_single` if `n_chains == 1`
-  - `diagnostics_multiple` if `n_chains >= 2`
-- `draws` if `return_draws = TRUE` (matrix for one chain; list of matrices for multiple chains)
+- `ref_predictor`, `severity`, `grid_summary`.
+- `best_settings`: selected prior setting including `Sigma_diag`, `kappa`, acceptance rate, and posterior predictive match statistic.
+- `posterior_point`, `posterior_means`, `posterior_medians`, `posterior_estimates`.
+- `scaled_summary`: selected estimate, mean, median, SD, credible interval, and interval-based flags.
+- `standardized_coefs_back`: selected estimate, mean, median, and credible interval on standardized, `b_A`, SAS, and Long scales.
+- `burnin_step_trace_best`, `step_size_final_best`.
+- `diagnostics_single` or `diagnostics_multiple` when `coda` is available.
+- `draws` if `return_draws = TRUE`.
 
 **Examples**
+
 ```r
 y <- c(0,0,0,0, 1,1,1,1)
 X <- data.frame(
@@ -376,20 +404,28 @@ X <- data.frame(
   X3 = factor(c(rep("A",4), rep("B",4)))
 )
 
-## Single Chain
+## Single chain
 fit_single <- MEP_mixture(
   y, X,
   n_chains = 1,
-  chain_seed = 9
+  chain_seeds = 9
 )
 fit_single$scaled_summary
 fit_single$diagnostics_single
 
-## Multiple Chains
+## Posterior median as the reported point estimate
+fit_median <- MEP_mixture(
+  y, X,
+  posterior_point = "median",
+  chain_seeds = 9
+)
+fit_median$scaled_summary
+
+## Multiple chains
 fit_multi <- MEP_mixture(
   y, X,
   n_chains = 4,
-  chain_seed = c(101, 102, 103, 104),
+  chain_seeds = c(101, 102, 103, 104),
   combine_chains = "stack"
 )
 fit_multi$scaled_summary
@@ -397,9 +433,9 @@ fit_multi$diagnostics_multiple
 ```
 
 **Notes**
-- Standardization/back-transforms use **unscaled encoded** column SDs; for a 0/1 dummy with prevalence \\(p\\), SD is \\(\\sqrt{p(1-p)}\\).
-- The **reference predictor** for ratios comes from original `X` (default = highest severity). If a factor, the denominator is its **first dummy**.
-- Naming note: `MEP_latent()` reports `b_A_*` for the per-unit (logit) effect; `MEP_mixture()` uses `b_logit_*`. These are equivalent (A ≡ logit).
+- Standardization/back-transforms use unscaled encoded-column SDs; for a 0/1 dummy with prevalence \(p\), SD is \(\sqrt{p(1-p)}\).
+- The reference predictor for coefficient ratios comes from original `X` and defaults to the predictor with the highest univariate severity. If it is a factor, the first encoded dummy is used as the denominator.
+- Both `MEP_latent()` and `MEP_mixture()` use `b_A_*` naming for the per-unit encoded-scale effect.
 
 ---
 
@@ -407,6 +443,8 @@ fit_multi$diagnostics_multiple
 - Outcome is binary and will be normalized to `{0,1}` (supports logical or 2-level factor/character).
 - Categorical predictors are handled directly (univariate) or via dummy encoding (latent / mixture).
 - **MEP_latent** and **MEP_mixture** outputs are per **encoded** column (e.g., `FactorLevel` dummies) **with CIs**.
+- `sigma2_*` parameters denote diagonal scatter quantities used to build the MEP scatter matrix; they are not generally marginal prior variances when `kappa != 1`.
+- Posterior means and medians are both returned by all three MEP functions; `posterior_point` selects which is exposed as the primary `Estimate`.
 - Change baselines with `stats::relevel()` to alter dummy interpretation.
 - Testing:
   ```r

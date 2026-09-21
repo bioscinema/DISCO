@@ -12,8 +12,9 @@ MEP_latent(
   init_beta = 0.01,
   step_size = 0.4,
   mu_vals = seq(-1, 1, by = 0.1),
-  sigma0_intercept = 10,
-  sigma_global_multipliers = c(0.1, 0.5, 1, 2, 5, 10),
+  sigma2_intercept = 10,
+  sigma2_slope_grid = c(0.1, 0.5, 1, 2, 5, 10),
+  posterior_point = c("mean", "median"),
   kappa_mode = c("auto", "fixed"),
   kappa_vals = c(0.5, 1, 2),
   kappa_fixed = 1,
@@ -30,7 +31,9 @@ MEP_latent(
   combine_chains = c("stack", "none"),
   return_draws = FALSE,
   ess_threshold = 150,
-  geweke_z_threshold = 2
+  geweke_z_threshold = 2,
+  sigma0_intercept = NULL,
+  sigma_global_multipliers = NULL
 )
 }
 \arguments{
@@ -49,10 +52,14 @@ MEP_latent(
 
 \item{mu_vals}{Numeric vector; each value is repeated to length \eqn{p} to form \eqn{\mu} in the prior grid.}
 
-\item{sigma0_intercept}{Prior scale for the intercept entry of \eqn{\Sigma} (logit scale). Default \code{10}.}
+\item{sigma2_intercept}{Intercept diagonal scatter entry placed directly in \eqn{\Sigma}. Default \code{10}.}
 
-\item{sigma_global_multipliers}{Numeric vector of global multipliers applied to all slope prior scales
-(intercept held at \code{sigma0_intercept}). Default \code{c(0.1, 0.5, 1, 2, 5, 10)}.}
+\item{sigma2_slope_grid}{Numeric vector of candidate common slope diagonal scatter entries.
+Each candidate is placed directly on every slope diagonal of \eqn{\Sigma}.
+Default \code{c(0.1, 0.5, 1, 2, 5, 10)}.}
+
+\item{posterior_point}{Point summary to expose as \code{Estimate}: \code{"mean"} or \code{"median"}.
+Both posterior mean and median are always returned. Default \code{"mean"}.}
 
 \item{kappa_mode}{How to set \eqn{\kappa}. \code{"auto"} uses \code{kappa_vals} as a grid. \code{"fixed"}
 uses \code{kappa_fixed} for all runs. Default \code{"auto"}.}
@@ -95,17 +102,21 @@ single-chain case when \pkg{coda} is available. Default \code{150}.}
 
 \item{geweke_z_threshold}{Maximum allowed absolute Geweke z-score (across parameters) to declare convergence in
 the single-chain case when \pkg{coda} is available. Default \code{2}.}
+
+\item{sigma0_intercept, sigma_global_multipliers}{Deprecated backward-compatible aliases for
+\code{sigma2_intercept} and \code{sigma2_slope_grid}; supplied values are used directly.}
 }
 \value{
 A list with:
 \itemize{
 \item \code{best_settings}: list with chosen \code{mu} (string), \code{Sigma_diag} (string), chosen \code{kappa},
 , \code{kappa_mode}, \code{acceptance_rate}, and \code{prop_matched}.
-\item \code{posterior_means}: posterior means (length \eqn{p}) for the selected run (working scale).
+\item \code{posterior_means}, \code{posterior_medians}, and \code{posterior_estimates}:
+working-scale posterior point summaries for the selected run.
 \item \code{standardized_coefs_back}: data.frame per encoded column with means and CIs for standardized slopes
 and back-transformed effects (\code{b_A_original}, \code{b_SAS_original}, \code{b_Long_original}).
 \item \code{scaled_summary}: data.frame including Intercept with \code{Mean}, \code{SD}, \code{CI_low}, \code{CI_high},
-plus \code{Sig} and \code{Star}.
+plus \code{Median}, selected \code{Estimate}, \code{Sig}, and \code{Star}.
 \item \code{diagnostics_single}: returned only when \code{n_chains == 1} and \pkg{coda} is available.
 \item \code{diagnostics_multiple}: returned only when \code{n_chains >= 2} and \pkg{coda} is available.
 \item \code{burnin_step_trace_best}: list of burn-in tuning checkpoints per best-point chain.
@@ -114,14 +125,24 @@ plus \code{Sig} and \code{Star}.
 }
 }
 \description{
-Fits a logistic regression model with a multivariate Exponential Power prior
-using a random-walk Metropolis-Hastings (RW-MH) sampler and performs a small grid
-search over prior settings \eqn{(\mu, \Sigma, \kappa)}. Predictors are encoded
-(via \code{model.matrix}) and then z-scored internally for fitting using a safe scaler.
-Summaries and credible intervals are reported on the working (logit, standardized-design)
-scale and also back-transformed to the original encoded predictor scale.
+Global-grid MEP fit for pure latent separation
 }
 \details{
+Fits a logistic regression model with a multivariate Exponential Power prior using a
+random-walk Metropolis-Hastings (RW-MH) sampler. This function assumes that pure latent
+separation has already been diagnosed externally; it does not compute or numerically use
+a latent severity score. Because predictor-specific univariate severities are not used in
+this branch, all slope coefficients share a common diagonal scatter entry selected from a
+global grid. The function searches over prior location, the common slope scatter entry,
+and \eqn{\kappa}.
+
+The MEP scatter matrix is parameterized directly through its diagonal entries. Arguments
+whose names begin with \code{sigma2_} are values placed directly into \eqn{\Sigma}; they
+are scatter parameters and are not, in general, marginal prior variances when
+\eqn{\kappa \ne 1}. Predictors are encoded with \code{model.matrix()} and z-scored
+internally. Summaries and credible intervals are also back-transformed to the original
+encoded predictor scale.
+
 This function assumes the user inputs complete data. If any missing values are found
 in \code{y} or \code{X}, the function stops with an error.
 }

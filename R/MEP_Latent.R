@@ -1,11 +1,21 @@
 #' MEP for Pure Latent (multi-predictor) Logistic
 #'
-#' Fits a logistic regression model with a multivariate Exponential Power prior
-#' using a random-walk Metropolis-Hastings (RW-MH) sampler and performs a small grid
-#' search over prior settings \eqn{(\mu, \Sigma, \kappa)}. Predictors are encoded
-#' (via \code{model.matrix}) and then z-scored internally for fitting using a safe scaler.
-#' Summaries and credible intervals are reported on the working (logit, standardized-design)
-#' scale and also back-transformed to the original encoded predictor scale.
+#' Global-grid MEP fit for pure latent separation
+#'
+#' Fits a logistic regression model with a multivariate Exponential Power prior using a
+#' random-walk Metropolis-Hastings (RW-MH) sampler. This function assumes that pure latent
+#' separation has already been diagnosed externally; it does not compute or numerically use
+#' a latent severity score. Because predictor-specific univariate severities are not used in
+#' this branch, all slope coefficients share a common diagonal scatter entry selected from a
+#' global grid. The function searches over prior location, the common slope scatter entry,
+#' and \eqn{\kappa}.
+#'
+#' The MEP scatter matrix is parameterized directly through its diagonal entries. Arguments
+#' whose names begin with \code{sigma2_} are values placed directly into \eqn{\Sigma}; they
+#' are scatter parameters and are not, in general, marginal prior variances when
+#' \eqn{\kappa \ne 1}. Predictors are encoded with \code{model.matrix()} and z-scored
+#' internally. Summaries and credible intervals are also back-transformed to the original
+#' encoded predictor scale.
 #'
 #' This function assumes the user inputs complete data. If any missing values are found
 #' in \code{y} or \code{X}, the function stops with an error.
@@ -45,9 +55,14 @@
 #' @param step_size Proposal standard deviation for RW-MH. Default \code{0.40}.
 #'
 #' @param mu_vals Numeric vector; each value is repeated to length \eqn{p} to form \eqn{\mu} in the prior grid.
-#' @param sigma0_intercept Prior scale for the intercept entry of \eqn{\Sigma} (logit scale). Default \code{10}.
-#' @param sigma_global_multipliers Numeric vector of global multipliers applied to all slope prior scales
-#'   (intercept held at \code{sigma0_intercept}). Default \code{c(0.1, 0.5, 1, 2, 5, 10)}.
+#' @param sigma2_intercept Intercept diagonal scatter entry placed directly in \eqn{\Sigma}. Default \code{10}.
+#' @param sigma2_slope_grid Numeric vector of candidate common slope diagonal scatter entries.
+#'   Each candidate is placed directly on every slope diagonal of \eqn{\Sigma}.
+#'   Default \code{c(0.1, 0.5, 1, 2, 5, 10)}.
+#' @param posterior_point Point summary to expose as \code{Estimate}: \code{"mean"} or \code{"median"}.
+#'   Both posterior mean and median are always returned. Default \code{"mean"}.
+#' @param sigma0_intercept,sigma_global_multipliers Deprecated backward-compatible aliases for
+#'   \code{sigma2_intercept} and \code{sigma2_slope_grid}; supplied values are used directly.
 #'
 #' @param kappa_mode How to set \eqn{\kappa}. \code{"auto"} uses \code{kappa_vals} as a grid. \code{"fixed"}
 #'   uses \code{kappa_fixed} for all runs. Default \code{"auto"}.
@@ -86,11 +101,12 @@
 #' \itemize{
 #'   \item \code{best_settings}: list with chosen \code{mu} (string), \code{Sigma_diag} (string), chosen \code{kappa},
 #'         , \code{kappa_mode}, \code{acceptance_rate}, and \code{prop_matched}.
-#'   \item \code{posterior_means}: posterior means (length \eqn{p}) for the selected run (working scale).
+#'   \item \code{posterior_means}, \code{posterior_medians}, and \code{posterior_estimates}:
+#'         working-scale posterior point summaries for the selected run.
 #'   \item \code{standardized_coefs_back}: data.frame per encoded column with means and CIs for standardized slopes
 #'         and back-transformed effects (\code{b_A_original}, \code{b_SAS_original}, \code{b_Long_original}).
 #'   \item \code{scaled_summary}: data.frame including Intercept with \code{Mean}, \code{SD}, \code{CI_low}, \code{CI_high},
-#'         plus \code{Sig} and \code{Star}.
+#'         plus \code{Median}, selected \code{Estimate}, \code{Sig}, and \code{Star}.
 #'   \item \code{diagnostics_single}: returned only when \code{n_chains == 1} and \pkg{coda} is available.
 #'   \item \code{diagnostics_multiple}: returned only when \code{n_chains >= 2} and \pkg{coda} is available.
 #'   \item \code{burnin_step_trace_best}: list of burn-in tuning checkpoints per best-point chain.
@@ -136,8 +152,9 @@ MEP_latent <- function(
     init_beta = 0.01,
     step_size = 0.4,
     mu_vals = seq(-1, 1, by = 0.1),
-    sigma0_intercept = 10,
-    sigma_global_multipliers = c(0.1, 0.5, 1, 2, 5, 10),
+    sigma2_intercept = 10,
+    sigma2_slope_grid = c(0.1, 0.5, 1, 2, 5, 10),
+    posterior_point = c("mean","median"),
     kappa_mode = c("auto","fixed"),
     kappa_vals = c(0.5, 1, 2),
     kappa_fixed = 1,
@@ -154,12 +171,30 @@ MEP_latent <- function(
     combine_chains = c("stack","none"),
     return_draws = FALSE,
     ess_threshold = 150,
-    geweke_z_threshold = 2
+    geweke_z_threshold = 2,
+    sigma0_intercept = NULL,
+    sigma_global_multipliers = NULL
 ) {
   `%||%` <- function(a, b) if (!is.null(a)) a else b
 
   combine_chains <- base::match.arg(as.character(combine_chains), choices = c("stack","none"))
   kappa_mode <- base::match.arg(as.character(kappa_mode), choices = c("auto","fixed"))
+  posterior_point <- base::match.arg(as.character(posterior_point), choices = c("mean","median"))
+
+  if (!is.null(sigma0_intercept)) {
+    warning("`sigma0_intercept` is deprecated; use `sigma2_intercept`.", call. = FALSE)
+    sigma2_intercept <- sigma0_intercept
+  }
+  if (!is.null(sigma_global_multipliers)) {
+    warning("`sigma_global_multipliers` is deprecated; use `sigma2_slope_grid`.", call. = FALSE)
+    sigma2_slope_grid <- sigma_global_multipliers
+  }
+  if (!is.numeric(sigma2_intercept) || length(sigma2_intercept) != 1L || !is.finite(sigma2_intercept) || sigma2_intercept <= 0) {
+    stop("`sigma2_intercept` must be a finite positive scalar.", call. = FALSE)
+  }
+  if (!is.numeric(sigma2_slope_grid) || length(sigma2_slope_grid) < 1L || any(!is.finite(sigma2_slope_grid)) || any(sigma2_slope_grid <= 0)) {
+    stop("`sigma2_slope_grid` must contain positive finite values.", call. = FALSE)
+  }
 
   if (!is.numeric(burn_in) || length(burn_in) != 1L || burn_in < 0) stop("`burn_in` must be >= 0.", call. = FALSE)
   if (!is.numeric(n_iter) || length(n_iter) != 1L || n_iter < 1) stop("`n_iter` must be >= 1 (post-burn draws).", call. = FALSE)
@@ -199,12 +234,16 @@ MEP_latent <- function(
 
   summarize_post <- function(post, X_orig, ci_level, ppc_threshold, y, Xw) {
     pm  <- colMeans(post)
+    pmed <- apply(post, 2, stats::median)
+    pest <- if (posterior_point == "mean") pm else pmed
     se  <- apply(post, 2, stats::sd)
     ci_scaled <- qfun_mat(post, ci_level)
 
     scaled_summary <- data.frame(
       Param   = colnames(Xw),
+      Estimate = pest,
       Mean    = pm,
+      Median  = pmed,
       SD      = se,
       CI_low  = ci_scaled[, 1],
       CI_high = ci_scaled[, 2],
@@ -237,7 +276,10 @@ MEP_latent <- function(
 
     summarise_mat <- function(M) {
       ci <- qfun_mat(M, ci_level)
-      data.frame(Mean = colMeans(M), CI_low = ci[, 1], CI_high = ci[, 2])
+      mn <- colMeans(M)
+      md <- apply(M, 2, stats::median)
+      est <- if (posterior_point == "mean") mn else md
+      data.frame(Estimate = est, Mean = mn, Median = md, CI_low = ci[, 1], CI_high = ci[, 2])
     }
 
     out_scaled <- summarise_mat(samp_scaled)
@@ -247,16 +289,24 @@ MEP_latent <- function(
 
     std_back <- data.frame(
       Predictor       = colnames(X_orig),
-      Scaled          = out_scaled$Mean,
+      Scaled          = out_scaled$Estimate,
+      Scaled_Mean     = out_scaled$Mean,
+      Scaled_Median   = out_scaled$Median,
       Scaled_CI_low   = out_scaled$CI_low,
       Scaled_CI_high  = out_scaled$CI_high,
-      b_A_original    = out_A$Mean,
+      b_A_original    = out_A$Estimate,
+      b_A_Mean        = out_A$Mean,
+      b_A_Median      = out_A$Median,
       b_A_CI_low      = out_A$CI_low,
       b_A_CI_high     = out_A$CI_high,
-      b_SAS_original  = out_SAS$Mean,
+      b_SAS_original  = out_SAS$Estimate,
+      b_SAS_Mean      = out_SAS$Mean,
+      b_SAS_Median    = out_SAS$Median,
       b_SAS_CI_low    = out_SAS$CI_low,
       b_SAS_CI_high   = out_SAS$CI_high,
-      b_Long_original = out_Long$Mean,
+      b_Long_original = out_Long$Estimate,
+      b_Long_Mean     = out_Long$Mean,
+      b_Long_Median   = out_Long$Median,
       b_Long_CI_low   = out_Long$CI_low,
       b_Long_CI_high  = out_Long$CI_high,
       row.names = NULL,
@@ -276,6 +326,8 @@ MEP_latent <- function(
 
     list(
       posterior_means = pm,
+      posterior_medians = pmed,
+      posterior_estimates = pest,
       scaled_summary = scaled_summary,
       standardized_coefs_back = std_back,
       prop_matched = prop_matched
@@ -353,8 +405,10 @@ MEP_latent <- function(
 
   # grids
   mu_grid <- lapply(mu_vals, function(m) rep(m, p_all))
-  build_sigma <- function(gm) diag(c(sigma0_intercept, rep(gm, p_all - 1L)), nrow = p_all, ncol = p_all)
-  Sigma_list <- lapply(sigma_global_multipliers, build_sigma)
+  build_sigma <- function(sigma2_slope) {
+    diag(c(sigma2_intercept, rep(sigma2_slope, p_all - 1L)), nrow = p_all, ncol = p_all)
+  }
+  Sigma_list <- lapply(sigma2_slope_grid, build_sigma)
 
   if (kappa_mode == "fixed") {
     if (!is.numeric(kappa_fixed) || length(kappa_fixed) != 1L || !is.finite(kappa_fixed) || kappa_fixed <= 0) {
@@ -667,7 +721,10 @@ MEP_latent <- function(
       acceptance_rate = best_acceptance,
       prop_matched = best_prop_matched
     ),
+    posterior_point = posterior_point,
     posterior_means = sum_final$posterior_means,
+    posterior_medians = sum_final$posterior_medians,
+    posterior_estimates = sum_final$posterior_estimates,
     standardized_coefs_back = sum_final$standardized_coefs_back,
     scaled_summary = sum_final$scaled_summary,
     burnin_step_trace_best = lapply(best_chains, `[[`, "burnin_step_trace"),

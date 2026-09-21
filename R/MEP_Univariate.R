@@ -1,9 +1,17 @@
 #' MEP for Univariate Logistic
 #'
-#' Runs a DISCO-based univariate separation diagnostic, constructs a
-#' Exponential Power prior from the severity score,
-#' and fits a univariate logistic model via
-#' random-walk Metropolis-Hastings (RW-MH).
+#' Direct diagnosis-guided MEP fit for univariate separation
+#'
+#' Runs the DISCO univariate separation diagnostic, maps the resulting severity score
+#' directly to the slope diagonal scatter entry of the MEP prior and to the exponential-power
+#' shape parameter, and then fits a univariate logistic model by random-walk
+#' Metropolis-Hastings (RW-MH). No hyperparameter grid search is performed in this branch.
+#'
+#' The MEP scatter matrix is written as \eqn{\Sigma = \mathrm{diag}(\sigma_0^2,\sigma_1^2)}.
+#' Arguments whose names begin with \code{sigma2_} are the diagonal entries placed directly
+#' into \eqn{\Sigma}; they are scatter parameters and are not, in general, marginal prior
+#' variances when \eqn{\kappa \ne 1}. The defaults are an exact reparameterization of the
+#' previous implementation, so the default prior is numerically unchanged.
 #'
 #' Missing handling is complete-case only: rows with any NA in the outcome or
 #' predictor are dropped once and reused for both the DISCO severity diagnostic
@@ -26,7 +34,7 @@
 #'
 #' @param burn_in Integer; number of burn-in iterations per chain (discarded). Default \code{5000}.
 #' @param n_iter Integer; number of post-burn-in MCMC iterations (posterior draws) per chain.
-#' Default \code{20000}.
+#' Default \code{15000}.
 #' @param init_beta Numeric vector of length 2 giving initial values \code{c(beta0, beta1)}
 #' on the standardized scale. Default \code{c(0, 0)}.
 #'
@@ -56,15 +64,20 @@
 #' @param compare Logical; if \code{TRUE} (default) fit a GLM comparator on the same rows
 #' with standardized \eqn{X}.
 #' @param return_draws Logical; if \code{TRUE}, include post-burn posterior draws on
-#' standardized and original scales. Default \code{FALSE}.
+#' standardized and original scales. Default \code{TRUE}.
 #'
 #' @param transform_beta One of \code{"none"}, \code{"logit"}, \code{"SAS"}, \code{"Long"}.
 #' If not \code{"none"}, also reports the chosen slope on the original predictor scale.
 #' Default \code{"none"}.
 #'
-#' @param sigma0 Prior sd for intercept (logit scale). Default \code{10}.
-#' @param sigma1_hi Prior sd for slope under mild separation (severity near 0). Default \code{5}.
-#' @param sigma1_lo Prior sd for slope under severe separation (severity near 1). Default \code{0.15}.
+#' @param sigma2_intercept Intercept diagonal scatter entry placed directly in \eqn{\Sigma}. Default \code{100}.
+#'   This is exactly equivalent to the previous \code{sigma0 = 10} parameterization.
+#' @param sigma2_hi Slope diagonal scatter anchor under mild separation (severity near 0). Default \code{25}.
+#' @param sigma2_lo Slope diagonal scatter anchor under severe separation (severity near 1). Default \code{0.0225}.
+#' @param posterior_point Point summary to expose as \code{Estimate}: \code{"mean"} or \code{"median"}.
+#'   Both posterior mean and median are always returned. Default \code{"mean"}.
+#' @param sigma0,sigma1_hi,sigma1_lo Deprecated backward-compatible SD-style aliases.
+#'   If supplied, they are squared internally and override the corresponding \code{sigma2_} arguments.
 #' @param kappa_min,kappa_max Exponential-power shapes at severity 0 and 1, blended linearly.
 #' Defaults \code{1} and \code{2.5}.
 #'
@@ -73,12 +86,14 @@
 #'   \item \code{predictor}, \code{outcome}.
 #'   \item \code{disco}: list with \code{separation_type}, \code{severity_score},
 #'         \code{boundary_threshold}, \code{single_tie_boundary}, and \code{missing_info}.
-#'   \item \code{prior}: list with \code{mu}, \code{Sigma}, \code{kappa}, \code{sigma0}, \code{sigma1}.
+#'   \item \code{prior}: list with \code{mu}, \code{Sigma}, \code{kappa}, \code{sigma2_intercept}, and \code{sigma2_slope}.
 #'   \item \code{mcmc}: per-chain acceptance rates, step sizes, tuning traces, plus
 #'         \code{burn_in}, \code{n_iter} (post-burn), \code{n_total} (burn_in + n_iter),
 #'         \code{n_chains}, and \code{combine_chains}.
-#'   \item \code{posterior}: data.frame with \code{Param}, \code{Mean}, \code{SD},
-#'         \code{CI_low}, \code{CI_high}, \code{Sig_0}, and \code{Star}.
+#'   \item \code{posterior}: data.frame with \code{Param}, selected \code{Estimate}, \code{Mean},
+#'         \code{Median}, \code{SD}, \code{CI_low}, \code{CI_high}, \code{Sig_0}, and \code{Star}.
+#'   \item \code{posterior_means}, \code{posterior_medians}, and \code{posterior_estimates}:
+#'         working-scale posterior point summaries for intercept and slope.
 #'   \item \code{comparators}: list with GLM coefficients when \code{compare = TRUE}.
 #'   \item \code{rows_used}: integer indices of rows used after missing handling.
 #'   \item \code{diagnostics_multi}: included only when \code{n_chains >= 2} and \pkg{coda} is available.
@@ -138,18 +153,43 @@ MEP_Univariate <- function(
     compare = TRUE,
     return_draws = TRUE,
     transform_beta = "none",
-    sigma0 = 10,
-    sigma1_hi = 5,
-    sigma1_lo = 0.15,
+    sigma2_intercept = 100,
+    sigma2_hi = 25,
+    sigma2_lo = 0.0225,
+    posterior_point = c("mean","median"),
     kappa_min = 1,
     kappa_max = 2.5,
     tune_threshold_hi = 0.45,
     tune_threshold_lo = 0.20,
     tune_interval = 500,
-    ci_levels_for_stars = c(0.90, 0.95, 0.99)
+    ci_levels_for_stars = c(0.90, 0.95, 0.99),
+    sigma0 = NULL,
+    sigma1_hi = NULL,
+    sigma1_lo = NULL
 ) {
   transform_beta <- match.arg(transform_beta, choices = c("none","logit","SAS","Long"))
   combine_chains <- match.arg(combine_chains)
+  posterior_point <- match.arg(posterior_point)
+
+  if (!is.null(sigma0)) {
+    warning("`sigma0` is deprecated; use `sigma2_intercept`. The supplied value is squared for backward compatibility.", call. = FALSE)
+    sigma2_intercept <- sigma0^2
+  }
+  if (!is.null(sigma1_hi)) {
+    warning("`sigma1_hi` is deprecated; use `sigma2_hi`. The supplied value is squared for backward compatibility.", call. = FALSE)
+    sigma2_hi <- sigma1_hi^2
+  }
+  if (!is.null(sigma1_lo)) {
+    warning("`sigma1_lo` is deprecated; use `sigma2_lo`. The supplied value is squared for backward compatibility.", call. = FALSE)
+    sigma2_lo <- sigma1_lo^2
+  }
+
+  for (nm in c("sigma2_intercept", "sigma2_hi", "sigma2_lo")) {
+    val <- get(nm)
+    if (!is.numeric(val) || length(val) != 1L || !is.finite(val) || val <= 0) {
+      stop(sprintf("`%s` must be a finite positive scalar.", nm), call. = FALSE)
+    }
+  }
 
   if (!is.data.frame(data)) stop("`data` must be a data.frame.", call. = FALSE)
   if (!predictor %in% names(data)) stop(sprintf("Predictor '%s' not found.", predictor), call. = FALSE)
@@ -248,12 +288,12 @@ MEP_Univariate <- function(
 
   mu0 <- logit_clip(y_bar)
   mu1 <- 0
-  log_sigma1 <- (1 - severity) * log(sigma1_hi) + severity * log(sigma1_lo)
-  sigma1 <- exp(log_sigma1)
+  log_sigma2_1 <- (1 - severity) * log(sigma2_hi) + severity * log(sigma2_lo)
+  sigma2_1 <- exp(log_sigma2_1)
   kappa  <- kappa_min + severity * (kappa_max - kappa_min)
 
   mu <- c(mu0, mu1)
-  Sigma <- diag(c(sigma0^2, sigma1^2))
+  Sigma <- diag(c(sigma2_intercept, sigma2_1))
 
   step_size0 <- step_hi * (1 - severity) + step_lo * severity
   log1pexp <- function(z) ifelse(z > 0, z + log1p(exp(-z)), log1p(exp(z)))
@@ -406,6 +446,10 @@ MEP_Univariate <- function(
   }
   post_orig <- transform_chain_to_original(post_std, x_mean, x_sd)
 
+  posterior_means_all <- colMeans(post_std)
+  posterior_medians_all <- apply(post_std, 2, stats::median)
+  posterior_estimates_all <- if (posterior_point == "mean") posterior_means_all else posterior_medians_all
+
   ci_mat_for_level <- function(M, lvl) {
     qlo <- (1 - lvl) / 2
     qhi <- 1 - qlo
@@ -414,6 +458,8 @@ MEP_Univariate <- function(
 
   summarize_draws <- function(draws_mat, ci_level_main, star_levels) {
     pm <- colMeans(draws_mat)
+    pmed <- apply(draws_mat, 2, stats::median)
+    pest <- if (posterior_point == "mean") pm else pmed
     sdv <- apply(draws_mat, 2, stats::sd)
     ci_main <- ci_mat_for_level(draws_mat, ci_level_main)
 
@@ -428,7 +474,9 @@ MEP_Univariate <- function(
     sig0 <- (ci_main[, 1] > 0) | (ci_main[, 2] < 0)
 
     data.frame(
+      Estimate = pest,
       Mean = pm,
+      Median = pmed,
       SD = sdv,
       CI_low = ci_main[, 1],
       CI_high = ci_main[, 2],
@@ -492,8 +540,13 @@ MEP_Univariate <- function(
       single_tie_boundary = res_disco$single_tie_boundary,
       missing_info = list(rows_used = keep_idx, policy = "complete")
     ),
-    prior = list(mu = mu, Sigma = Sigma, kappa = kappa, sigma0 = sigma0, sigma1 = sigma1),
+    prior = list(mu = mu, Sigma = Sigma, kappa = kappa,
+                 sigma2_intercept = sigma2_intercept, sigma2_slope = sigma2_1),
     mcmc = mcmc_info,
+    posterior_point = posterior_point,
+    posterior_means = posterior_means_all,
+    posterior_medians = posterior_medians_all,
+    posterior_estimates = posterior_estimates_all,
     posterior = posterior,
     comparators = comparators,
     rows_used = keep_idx

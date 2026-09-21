@@ -22,15 +22,19 @@ MEP_Univariate(
   compare = TRUE,
   return_draws = TRUE,
   transform_beta = "none",
-  sigma0 = 10,
-  sigma1_hi = 5,
-  sigma1_lo = 0.15,
+  sigma2_intercept = 100,
+  sigma2_hi = 25,
+  sigma2_lo = 0.0225,
+  posterior_point = c("mean", "median"),
   kappa_min = 1,
   kappa_max = 2.5,
   tune_threshold_hi = 0.45,
   tune_threshold_lo = 0.2,
   tune_interval = 500,
-  ci_levels_for_stars = c(0.9, 0.95, 0.99)
+  ci_levels_for_stars = c(0.9, 0.95, 0.99),
+  sigma0 = NULL,
+  sigma1_hi = NULL,
+  sigma1_lo = NULL
 )
 }
 \arguments{
@@ -43,7 +47,7 @@ MEP_Univariate(
 \item{burn_in}{Integer; number of burn-in iterations per chain (discarded). Default \code{5000}.}
 
 \item{n_iter}{Integer; number of post-burn-in MCMC iterations (posterior draws) per chain.
-Default \code{20000}.}
+Default \code{15000}.}
 
 \item{init_beta}{Numeric vector of length 2 giving initial values \code{c(beta0, beta1)}
 on the standardized scale. Default \code{c(0, 0)}.}
@@ -72,17 +76,21 @@ convergence for the single-chain case when \pkg{coda} is available. Default \cod
 with standardized \eqn{X}.}
 
 \item{return_draws}{Logical; if \code{TRUE}, include post-burn posterior draws on
-standardized and original scales. Default \code{FALSE}.}
+standardized and original scales. Default \code{TRUE}.}
 
 \item{transform_beta}{One of \code{"none"}, \code{"logit"}, \code{"SAS"}, \code{"Long"}.
 If not \code{"none"}, also reports the chosen slope on the original predictor scale.
 Default \code{"none"}.}
 
-\item{sigma0}{Prior sd for intercept (logit scale). Default \code{10}.}
+\item{sigma2_intercept}{Intercept diagonal scatter entry placed directly in \eqn{\Sigma}. Default \code{100}.
+This is exactly equivalent to the previous \code{sigma0 = 10} parameterization.}
 
-\item{sigma1_hi}{Prior sd for slope under mild separation (severity near 0). Default \code{5}.}
+\item{sigma2_hi}{Slope diagonal scatter anchor under mild separation (severity near 0). Default \code{25}.}
 
-\item{sigma1_lo}{Prior sd for slope under severe separation (severity near 1). Default \code{0.15}.}
+\item{sigma2_lo}{Slope diagonal scatter anchor under severe separation (severity near 1). Default \code{0.0225}.}
+
+\item{posterior_point}{Point summary to expose as \code{Estimate}: \code{"mean"} or \code{"median"}.
+Both posterior mean and median are always returned. Default \code{"mean"}.}
 
 \item{kappa_min, kappa_max}{Exponential-power shapes at severity 0 and 1, blended linearly.
 Defaults \code{1} and \code{2.5}.}
@@ -95,6 +103,9 @@ Defaults \code{0.45} and \code{0.20}.}
 
 \item{ci_levels_for_stars}{Numeric vector of nested credible interval levels used to assign
 evidence stars in \code{posterior}. Default \code{c(0.90, 0.95, 0.99)}.}
+
+\item{sigma0, sigma1_hi, sigma1_lo}{Deprecated backward-compatible SD-style aliases.
+If supplied, they are squared internally and override the corresponding \code{sigma2_} arguments.}
 }
 \value{
 A list with components:
@@ -102,12 +113,14 @@ A list with components:
 \item \code{predictor}, \code{outcome}.
 \item \code{disco}: list with \code{separation_type}, \code{severity_score},
 \code{boundary_threshold}, \code{single_tie_boundary}, and \code{missing_info}.
-\item \code{prior}: list with \code{mu}, \code{Sigma}, \code{kappa}, \code{sigma0}, \code{sigma1}.
+\item \code{prior}: list with \code{mu}, \code{Sigma}, \code{kappa}, \code{sigma2_intercept}, and \code{sigma2_slope}.
 \item \code{mcmc}: per-chain acceptance rates, step sizes, tuning traces, plus
 \code{burn_in}, \code{n_iter} (post-burn), \code{n_total} (burn_in + n_iter),
 \code{n_chains}, and \code{combine_chains}.
-\item \code{posterior}: data.frame with \code{Param}, \code{Mean}, \code{SD},
-\code{CI_low}, \code{CI_high}, \code{Sig_0}, and \code{Star}.
+\item \code{posterior}: data.frame with \code{Param}, selected \code{Estimate}, \code{Mean},
+\code{Median}, \code{SD}, \code{CI_low}, \code{CI_high}, \code{Sig_0}, and \code{Star}.
+\item \code{posterior_means}, \code{posterior_medians}, and \code{posterior_estimates}:
+working-scale posterior point summaries for intercept and slope.
 \item \code{comparators}: list with GLM coefficients when \code{compare = TRUE}.
 \item \code{rows_used}: integer indices of rows used after missing handling.
 \item \code{diagnostics_multi}: included only when \code{n_chains >= 2} and \pkg{coda} is available.
@@ -116,12 +129,20 @@ A list with components:
 }
 }
 \description{
-Runs a DISCO-based univariate separation diagnostic, constructs a
-Exponential Power prior from the severity score,
-and fits a univariate logistic model via
-random-walk Metropolis-Hastings (RW-MH).
+Direct diagnosis-guided MEP fit for univariate separation
 }
 \details{
+Runs the DISCO univariate separation diagnostic, maps the resulting severity score
+directly to the slope diagonal scatter entry of the MEP prior and to the exponential-power
+shape parameter, and then fits a univariate logistic model by random-walk
+Metropolis-Hastings (RW-MH). No hyperparameter grid search is performed in this branch.
+
+The MEP scatter matrix is written as \eqn{\Sigma = \mathrm{diag}(\sigma_0^2,\sigma_1^2)}.
+Arguments whose names begin with \code{sigma2_} are the diagonal entries placed directly
+into \eqn{\Sigma}; they are scatter parameters and are not, in general, marginal prior
+variances when \eqn{\kappa \ne 1}. The defaults are an exact reparameterization of the
+previous implementation, so the default prior is numerically unchanged.
+
 Missing handling is complete-case only: rows with any NA in the outcome or
 predictor are dropped once and reused for both the DISCO severity diagnostic
 and Bayesian estimation.

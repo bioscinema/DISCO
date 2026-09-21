@@ -12,10 +12,11 @@ MEP_mixture(
   init_beta = 0.01,
   step_size = 0.4,
   mu_intercept_offsets = seq(-1, 1, by = 0.2),
-  sigma0_intercept = 10,
-  sigma_global_multipliers = c(0.1, 0.5, 1, 2, 5, 10),
-  sigma_hi = 5,
-  sigma_lo = 0.15,
+  sigma2_intercept = 10,
+  sigma2_global_multipliers = c(0.1, 0.5, 1, 2, 5, 10),
+  sigma2_hi = 5,
+  sigma2_lo = 0.15,
+  posterior_point = c("mean", "median"),
   kappa_min = 1,
   kappa_max = 2.5,
   kappa_delta = seq(-0.5, 0.5, by = 0.2),
@@ -33,7 +34,11 @@ MEP_mixture(
   tune_threshold_lo = 0.2,
   tune_interval = 1000,
   ess_threshold = 150,
-  geweke_z_threshold = 2
+  geweke_z_threshold = 2,
+  sigma0_intercept = NULL,
+  sigma_global_multipliers = NULL,
+  sigma_hi = NULL,
+  sigma_lo = NULL
 )
 }
 \arguments{
@@ -53,14 +58,17 @@ Default 0.01.}
 \item{mu_intercept_offsets}{Numeric vector of offsets added to logit(mean(y)) for intercept prior mean grid.
 Default seq(-1, 1, by = 0.2).}
 
-\item{sigma0_intercept}{Prior sd for the intercept (logit scale). Default 10.}
+\item{sigma2_intercept}{Intercept diagonal scatter entry placed directly in \eqn{\Sigma}. Default 10.}
 
-\item{sigma_global_multipliers}{Numeric vector of global multipliers applied to all slope prior scales.
-Default c(0.1, 0.5, 1, 2, 5, 10).}
+\item{sigma2_global_multipliers}{Numeric vector of dimensionless global multipliers applied to the
+predictor-specific slope scatter anchors. Default c(0.1, 0.5, 1, 2, 5, 10).}
 
-\item{sigma_hi}{Slope prior sd under mild separation (s=0). Default 5.}
+\item{sigma2_hi}{Slope diagonal scatter anchor under mild separation (s=0). Default 5.}
 
-\item{sigma_lo}{Slope prior sd under severe separation (s=1). Default 0.15.}
+\item{sigma2_lo}{Slope diagonal scatter anchor under severe separation (s=1). Default 0.15.}
+
+\item{posterior_point}{Point summary to expose as \code{Estimate}: \code{"mean"} or \code{"median"}.
+Both posterior mean and median are always returned. Default \code{"mean"}.}
 
 \item{kappa_min, kappa_max}{EP shape at s=0 and s=1. Defaults 1 and 2.5.}
 
@@ -95,13 +103,16 @@ Default seq(-0.5, 0.5, by = 0.2), truncated to \code{[0.5, 3]}.}
 \item{ess_threshold}{Minimum ESS required for single-chain diagnostics (requires coda). Default 150.}
 
 \item{geweke_z_threshold}{Maximum abs Geweke z allowed for single-chain diagnostics (requires coda). Default 2.}
+
+\item{sigma0_intercept, sigma_global_multipliers, sigma_hi, sigma_lo}{Deprecated backward-compatible aliases.
+Supplied values are used directly, preserving the previous numerical parameterization.}
 }
 \value{
 A list with:
 \itemize{
 \item \code{best_settings}: list with chosen \code{mu} (string), \code{Sigma_diag} (string), chosen \code{kappa},
 \code{kappa_mode}, \code{acceptance_rate}, and \code{prop_matched}.
-\item posterior_means, scaled_summary, standardized_coefs_back
+\item posterior_means, posterior_medians, posterior_estimates, scaled_summary, standardized_coefs_back
 \item diagnostics_single (if n_chains==1) or diagnostics_multiple (if n_chains>=2) when coda is available
 \item burnin_step_trace_best, step_size_final_best
 \item draws (optional)
@@ -109,15 +120,24 @@ A list with:
 }
 }
 \description{
-Fits a multi-predictor logistic model with a multivariate Exponential Power prior
-using a Random-Walk Metropolis-Hastings (RW-MH) sampler. Slope prior scales
-are anchored by univariate DISCO severities computed on the modeling data.
-A small grid over intercept prior mean offsets, a global multiplier on slope scales,
-and the shape is explored. One run is selected using an acceptance-rate window,
-posterior predictive agreement, and (when available) closeness to GLM coefficient ratios
-relative to a reference predictor.
+Local-plus-global MEP fit for mixture separation
 }
 \details{
+Fits a multi-predictor logistic model with a multivariate Exponential Power prior using a
+Random-Walk Metropolis-Hastings (RW-MH) sampler. This branch computes predictor-specific
+DISCO univariate severities and maps them to local diagonal scatter anchors and local
+shape anchors. A global multiplier grid then rescales the local slope scatter anchors,
+while the global shape grid is formed by adding \code{kappa_delta} offsets to the average
+severity-derived shape anchor. Mixture/latent classification itself is assumed to have been
+established outside this function; latent severity does not directly enter the numerical
+hyperparameter mapping here.
+
+Arguments whose names begin with \code{sigma2_} refer to diagonal scatter quantities
+used to build \eqn{\Sigma}. The \code{sigma2_global_multipliers} values are dimensionless
+multipliers, not direct slope diagonal entries. Posterior grid selection continues to use
+posterior means for backward compatibility; \code{posterior_point} controls only the final
+user-facing point summary.
+
 Complete-case only. This function assumes inputs are complete; it stops if any NA
 appears in y or X.
 
