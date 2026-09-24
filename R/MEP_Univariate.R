@@ -72,8 +72,8 @@
 #'
 #' @param sigma2_intercept Intercept diagonal scatter entry placed directly in \eqn{\Sigma}. Default \code{100}.
 #'   This is exactly equivalent to the previous \code{sigma0 = 10} parameterization.
-#' @param sigma2_hi Slope diagonal scatter anchor under mild separation (severity near 0). Default \code{25}.
-#' @param sigma2_lo Slope diagonal scatter anchor under severe separation (severity near 1). Default \code{0.0225}.
+#' @param sigma2_hi Slope diagonal scatter anchor under mild separation (severity near 0). Default \code{5}.
+#' @param sigma2_lo Slope diagonal scatter anchor under severe separation (severity near 1). Default \code{0.15}.
 #' @param posterior_point Point summary to expose as \code{Estimate}: \code{"mean"} or \code{"median"}.
 #'   Both posterior mean and median are always returned. Default \code{"mean"}.
 #' @param sigma0,sigma1_hi,sigma1_lo Deprecated backward-compatible SD-style aliases.
@@ -154,8 +154,8 @@ MEP_Univariate <- function(
     return_draws = TRUE,
     transform_beta = "none",
     sigma2_intercept = 100,
-    sigma2_hi = 25,
-    sigma2_lo = 0.0225,
+    sigma2_hi = 5,
+    sigma2_lo = 0.15,
     posterior_point = c("mean","median"),
     kappa_min = 1,
     kappa_max = 2.5,
