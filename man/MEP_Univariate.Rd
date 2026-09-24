@@ -22,7 +22,7 @@ MEP_Univariate(
   compare = TRUE,
   return_draws = TRUE,
   transform_beta = "none",
-  sigma2_intercept = 100,
+  sigma2_intercept = 10,
   sigma2_hi = 5,
   sigma2_lo = 0.15,
   posterior_point = c("mean", "median"),
@@ -82,7 +82,7 @@ standardized and original scales. Default \code{TRUE}.}
 If not \code{"none"}, also reports the chosen slope on the original predictor scale.
 Default \code{"none"}.}
 
-\item{sigma2_intercept}{Intercept diagonal scatter entry placed directly in \eqn{\Sigma}. Default \code{100}.
+\item{sigma2_intercept}{Intercept diagonal scatter entry placed directly in \eqn{\Sigma}. Default \code{10}.
 This is exactly equivalent to the previous \code{sigma0 = 10} parameterization.}
 
 \item{sigma2_hi}{Slope diagonal scatter anchor under mild separation (severity near 0). Default \code{5}.}
