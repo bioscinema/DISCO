@@ -304,7 +304,7 @@ MEP_mixture <- function(
   }
 
   summarize_post <- function(post, X_enc_mat, ci_level#, ci_levels_for_stars
-                             ) {
+  ) {
     pm <- colMeans(post)
     pmed <- apply(post, 2, stats::median)
     pest <- if (posterior_point == "mean") pm else pmed

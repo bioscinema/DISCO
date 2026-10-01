@@ -11,7 +11,7 @@ MEP_latent(
   n_iter = 9000,
   init_beta = 0.01,
   step_size = 0.4,
-  mu_vals = seq(-1, 1, by = 0.1),
+  mu_intercept_offsets = seq(-1, 1, by = 0.1),
   sigma2_intercept = 10,
   sigma2_slope_grid = c(0.1, 0.5, 1, 2, 5, 10),
   posterior_point = c("mean", "median"),
@@ -50,9 +50,14 @@ MEP_latent(
 
 \item{step_size}{Proposal standard deviation for RW-MH. Default \code{0.40}.}
 
-\item{mu_vals}{Numeric vector; each value is repeated to length \eqn{p} to form \eqn{\mu} in the prior grid.}
+\item{mu_intercept_offsets}{Numeric vector of offsets \eqn{\Delta} added to
+\code{logit(mean(y))} to construct the intercept prior-mean grid.
+For each offset, all slope prior means are fixed at zero:
+\eqn{\mu=(\operatorname{logit}(\bar y)+\Delta,0,\ldots,0)^\top}.
+Default \code{seq(-1, 1, by = 0.1)}.}
 
-\item{sigma2_intercept}{Intercept diagonal scatter entry placed directly in \eqn{\Sigma}. Default \code{10}.}
+\item{sigma2_intercept}{Intercept diagonal scatter entry placed directly in \eqn{\Sigma}.
+Default \code{10}.}
 
 \item{sigma2_slope_grid}{Numeric vector of candidate common slope diagonal scatter entries.
 Each candidate is placed directly on every slope diagonal of \eqn{\Sigma}.
@@ -61,47 +66,50 @@ Default \code{c(0.1, 0.5, 1, 2, 5, 10)}.}
 \item{posterior_point}{Point summary to expose as \code{Estimate}: \code{"mean"} or \code{"median"}.
 Both posterior mean and median are always returned. Default \code{"mean"}.}
 
-\item{kappa_mode}{How to set \eqn{\kappa}. \code{"auto"} uses \code{kappa_vals} as a grid. \code{"fixed"}
-uses \code{kappa_fixed} for all runs. Default \code{"auto"}.}
+\item{kappa_mode}{How to set \eqn{\kappa}. \code{"auto"} uses \code{kappa_vals} as a grid.
+\code{"fixed"} uses \code{kappa_fixed} for all runs. Default \code{"auto"}.}
 
-\item{kappa_vals}{Numeric vector of positive \eqn{\kappa} values used when \code{kappa_mode="auto"}.
-Default \code{c(0.5, 1, 2)}.}
+\item{kappa_vals}{Numeric vector of positive \eqn{\kappa} values used when
+\code{kappa_mode="auto"}. Default \code{c(0.5, 1, 2)}.}
 
 \item{kappa_fixed}{Single positive value used when \code{kappa_mode="fixed"}. Default \code{1}.}
 
 \item{accept_window}{Numeric length-2 vector giving the acceptable MH acceptance-rate window.
 Default \code{c(0.30, 0.40)}.}
 
-\item{accept_target}{Numeric; target acceptance used if no grid point falls in \code{accept_window}.
-Default \code{0.35}.}
+\item{accept_target}{Numeric; target acceptance used if no grid point falls in
+\code{accept_window}. Default \code{0.35}.}
 
 \item{ci_level}{Credible interval level in \eqn{(0,1)}. Default \code{0.95}.}
 
 \item{ppc_threshold}{Posterior predictive match threshold. Default \code{0.80}.}
 
-\item{tune_threshold_hi, tune_threshold_lo}{Burn-in acceptance thresholds for multiplicative step-size tuning.
-Increase step size if acceptance \code{> hi}; decrease if \code{< lo}. Defaults \code{0.45} and \code{0.20}.}
+\item{tune_threshold_hi, tune_threshold_lo}{Burn-in acceptance thresholds for multiplicative
+step-size tuning. Increase step size if acceptance \code{> hi}; decrease if
+\code{< lo}. Defaults \code{0.45} and \code{0.20}.}
 
 \item{tune_interval}{Iterations between tuning checks during burn-in. Default \code{500}.}
 
 \item{verbose}{Logical; print brief progress messages. Default \code{FALSE}.}
 
-\item{n_chains}{Integer; number of MH chains to rerun for the selected best grid point. Default \code{1}.}
+\item{n_chains}{Integer; number of MH chains to rerun for the selected best grid point.
+Default \code{1}.}
 
-\item{chain_seeds}{Optional integer vector of length \code{n_chains} giving per-chain RNG seeds for
-the best-point reruns. If \code{NULL}, random seeds are generated.}
+\item{chain_seeds}{Optional integer vector of length \code{n_chains} giving per-chain RNG seeds
+for the best-point reruns. If \code{NULL}, random seeds are generated.}
 
-\item{combine_chains}{How to combine the best-point chains for final summaries. \code{"stack"} binds post-burn
-draws across chains; \code{"none"} uses only the first chain. Default \code{"stack"}.}
+\item{combine_chains}{How to combine the best-point chains for final summaries.
+\code{"stack"} binds post-burn draws across chains; \code{"none"} uses only the first chain.
+Default \code{"stack"}.}
 
 \item{return_draws}{Logical; if \code{TRUE}, return post-burn draws for the selected best grid point
 (a matrix if one chain, else a list of matrices). Default \code{FALSE}.}
 
-\item{ess_threshold}{Minimum effective sample size required (across parameters) to declare convergence in the
-single-chain case when \pkg{coda} is available. Default \code{150}.}
+\item{ess_threshold}{Minimum effective sample size required (across parameters) to declare
+convergence in the single-chain case when \pkg{coda} is available. Default \code{150}.}
 
-\item{geweke_z_threshold}{Maximum allowed absolute Geweke z-score (across parameters) to declare convergence in
-the single-chain case when \pkg{coda} is available. Default \code{2}.}
+\item{geweke_z_threshold}{Maximum allowed absolute Geweke z-score (across parameters) to declare
+convergence in the single-chain case when \pkg{coda} is available. Default \code{2}.}
 
 \item{sigma0_intercept, sigma_global_multipliers}{Deprecated backward-compatible aliases for
 \code{sigma2_intercept} and \code{sigma2_slope_grid}; supplied values are used directly.}
@@ -109,19 +117,27 @@ the single-chain case when \pkg{coda} is available. Default \code{2}.}
 \value{
 A list with:
 \itemize{
-\item \code{best_settings}: list with chosen \code{mu} (string), \code{Sigma_diag} (string), chosen \code{kappa},
-, \code{kappa_mode}, \code{acceptance_rate}, and \code{prop_matched}.
-\item \code{posterior_means}, \code{posterior_medians}, and \code{posterior_estimates}:
-working-scale posterior point summaries for the selected run.
-\item \code{standardized_coefs_back}: data.frame per encoded column with means and CIs for standardized slopes
-and back-transformed effects (\code{b_A_original}, \code{b_SAS_original}, \code{b_Long_original}).
-\item \code{scaled_summary}: data.frame including Intercept with \code{Mean}, \code{SD}, \code{CI_low}, \code{CI_high},
+\item \code{best_settings}: list with the chosen prior mean \code{mu},
+\code{mu_center_logit_prevalence}, selected \code{mu_intercept_offset},
+chosen \code{Sigma_diag}, chosen \code{kappa}, \code{kappa_mode},
+\code{acceptance_rate}, and \code{prop_matched}.
+\item \code{posterior_means}, \code{posterior_medians}, and
+\code{posterior_estimates}: working-scale posterior point summaries for the selected run.
+\item \code{standardized_coefs_back}: data.frame per encoded column with means and CIs
+for standardized slopes and back-transformed effects
+(\code{b_A_original}, \code{b_SAS_original}, \code{b_Long_original}).
+\item \code{scaled_summary}: data.frame including Intercept with
+\code{Mean}, \code{SD}, \code{CI_low}, \code{CI_high},
 plus \code{Median}, selected \code{Estimate}, \code{Sig}, and \code{Star}.
-\item \code{diagnostics_single}: returned only when \code{n_chains == 1} and \pkg{coda} is available.
-\item \code{diagnostics_multiple}: returned only when \code{n_chains >= 2} and \pkg{coda} is available.
+\item \code{grid_summary}: summary of all grid points evaluated during hyperparameter search.
+\item \code{diagnostics_single}: returned only when \code{n_chains == 1}
+and \pkg{coda} is available.
+\item \code{diagnostics_multiple}: returned only when \code{n_chains >= 2}
+and \pkg{coda} is available.
 \item \code{burnin_step_trace_best}: list of burn-in tuning checkpoints per best-point chain.
 \item \code{step_size_final_best}: numeric vector of final tuned step sizes per best-point chain.
-\item \code{draws}: optional draws for the best-point reruns (if \code{return_draws = TRUE}).
+\item \code{draws}: optional draws for the best-point reruns
+(if \code{return_draws = TRUE}).
 }
 }
 \description{
@@ -133,8 +149,22 @@ random-walk Metropolis-Hastings (RW-MH) sampler. This function assumes that pure
 separation has already been diagnosed externally; it does not compute or numerically use
 a latent severity score. Because predictor-specific univariate severities are not used in
 this branch, all slope coefficients share a common diagonal scatter entry selected from a
-global grid. The function searches over prior location, the common slope scatter entry,
-and \eqn{\kappa}.
+global grid.
+
+The prior mean is centered at zero for all slope coefficients. The intercept prior mean is
+centered at the observed event prevalence on the logit scale and searched over a grid of
+user-specified offsets:
+
+\deqn{
+\mu =
+\left(
+\operatorname{logit}(\bar y) + \Delta,\,
+0,\ldots,0
+\right)^\top.
+}
+
+The function therefore searches over the intercept prior-location offset, the common slope
+scatter entry, and \eqn{\kappa}.
 
 The MEP scatter matrix is parameterized directly through its diagonal entries. Arguments
 whose names begin with \code{sigma2_} are values placed directly into \eqn{\Sigma}; they
@@ -153,6 +183,8 @@ in \code{y} or \code{X}, the function stops with an error.
 \item Encodes factors in \code{X} with \code{model.matrix(~ ., data = X)} using treatment contrasts
 (baseline is the first level), drops the intercept, and fits on the numeric encoded design.
 \item Standardizes encoded predictors with a safe scaler (sets sd = 1 when sd is 0 or non-finite).
+\item Centers the intercept prior mean at \code{logit(mean(y))}, keeps all slope prior means at zero,
+and searches over \code{mu_intercept_offsets}.
 \item Runs one RW-MH chain for each grid setting and computes acceptance rate, posterior summaries,
 and a posterior predictive match statistic.
 \item Selects one grid setting using: (i) an acceptance-rate window (or closest to a target),
@@ -167,8 +199,8 @@ predictive agreement.
 \itemize{
 \item Numeric predictors remain a single encoded column with their original name.
 \item Factor predictors are expanded by \code{model.matrix()} using treatment contrasts with the first
-level as baseline. For a 2-level factor \code{X3} with levels \code{A} and \code{B} (baseline \code{A}),
-the encoded column is \code{X3B}, representing \code{B} versus \code{A}.
+level as baseline. For a 2-level factor \code{X3} with levels \code{A} and \code{B}
+(baseline \code{A}), the encoded column is \code{X3B}, representing \code{B} versus \code{A}.
 \item To change the baseline, relevel before calling:
 \preformatted{X$X3 <- stats::relevel(X$X3, ref = "B")}
 }
@@ -179,19 +211,21 @@ the encoded column is \code{X3B}, representing \code{B} versus \code{A}.
 y <- c(0,0,0,0, 1,1,1,1)
 X <- data.frame(
   X1 = c(-1.86, -0.81,  1.32, -0.40,  0.91,  2.49,  0.34,  0.25),
-  X2 = c( 0.52,  -0.07,  0.60,  0.67, -1.39,  0.16, -1.40, -0.09)
+  X2 = c( 0.52, -0.07,  0.60,  0.67, -1.39,  0.16, -1.40, -0.09)
 )
 
-## Single Chain
+## Single chain
 fit_single <- MEP_latent(
   y, X,
   n_chains = 1,
   chain_seeds = 9
 )
+
 fit_single$scaled_summary
+fit_single$best_settings
 fit_single$diagnostics_single
 
-## Multiple Chains
+## Multiple chains
 fit_multi <- MEP_latent(
   y, X,
   n_chains = 4,
@@ -199,7 +233,15 @@ fit_multi <- MEP_latent(
   combine_chains = "stack",
   return_draws = TRUE
 )
+
 fit_multi$scaled_summary
+fit_multi$best_settings
 fit_multi$diagnostics_multiple
+
+## Wider intercept-prior sensitivity range
+fit_wide_mu <- MEP_latent(
+  y, X,
+  mu_intercept_offsets = seq(-2, 2, length.out = 21)
+)
 }
 }

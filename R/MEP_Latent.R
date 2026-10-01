@@ -7,8 +7,22 @@
 #' separation has already been diagnosed externally; it does not compute or numerically use
 #' a latent severity score. Because predictor-specific univariate severities are not used in
 #' this branch, all slope coefficients share a common diagonal scatter entry selected from a
-#' global grid. The function searches over prior location, the common slope scatter entry,
-#' and \eqn{\kappa}.
+#' global grid.
+#'
+#' The prior mean is centered at zero for all slope coefficients. The intercept prior mean is
+#' centered at the observed event prevalence on the logit scale and searched over a grid of
+#' user-specified offsets:
+#'
+#' \deqn{
+#' \mu =
+#' \left(
+#' \operatorname{logit}(\bar y) + \Delta,\,
+#' 0,\ldots,0
+#' \right)^\top.
+#' }
+#'
+#' The function therefore searches over the intercept prior-location offset, the common slope
+#' scatter entry, and \eqn{\kappa}.
 #'
 #' The MEP scatter matrix is parameterized directly through its diagonal entries. Arguments
 #' whose names begin with \code{sigma2_} are values placed directly into \eqn{\Sigma}; they
@@ -26,6 +40,8 @@
 #'   \item Encodes factors in \code{X} with \code{model.matrix(~ ., data = X)} using treatment contrasts
 #'         (baseline is the first level), drops the intercept, and fits on the numeric encoded design.
 #'   \item Standardizes encoded predictors with a safe scaler (sets sd = 1 when sd is 0 or non-finite).
+#'   \item Centers the intercept prior mean at \code{logit(mean(y))}, keeps all slope prior means at zero,
+#'         and searches over \code{mu_intercept_offsets}.
 #'   \item Runs one RW-MH chain for each grid setting and computes acceptance rate, posterior summaries,
 #'         and a posterior predictive match statistic.
 #'   \item Selects one grid setting using: (i) an acceptance-rate window (or closest to a target),
@@ -38,8 +54,8 @@
 #' \itemize{
 #'   \item Numeric predictors remain a single encoded column with their original name.
 #'   \item Factor predictors are expanded by \code{model.matrix()} using treatment contrasts with the first
-#'         level as baseline. For a 2-level factor \code{X3} with levels \code{A} and \code{B} (baseline \code{A}),
-#'         the encoded column is \code{X3B}, representing \code{B} versus \code{A}.
+#'         level as baseline. For a 2-level factor \code{X3} with levels \code{A} and \code{B}
+#'         (baseline \code{A}), the encoded column is \code{X3B}, representing \code{B} versus \code{A}.
 #'   \item To change the baseline, relevel before calling:
 #' \preformatted{X$X3 <- stats::relevel(X$X3, ref = "B")}
 #' }
@@ -54,67 +70,86 @@
 #'   \eqn{p} (intercept plus encoded slopes). Default \code{0.01}.
 #' @param step_size Proposal standard deviation for RW-MH. Default \code{0.40}.
 #'
-#' @param mu_vals Numeric vector; each value is repeated to length \eqn{p} to form \eqn{\mu} in the prior grid.
-#' @param sigma2_intercept Intercept diagonal scatter entry placed directly in \eqn{\Sigma}. Default \code{10}.
+#' @param mu_intercept_offsets Numeric vector of offsets \eqn{\Delta} added to
+#'   \code{logit(mean(y))} to construct the intercept prior-mean grid.
+#'   For each offset, all slope prior means are fixed at zero:
+#'   \eqn{\mu=(\operatorname{logit}(\bar y)+\Delta,0,\ldots,0)^\top}.
+#'   Default \code{seq(-1, 1, by = 0.1)}.
+#'
+#' @param sigma2_intercept Intercept diagonal scatter entry placed directly in \eqn{\Sigma}.
+#'   Default \code{10}.
 #' @param sigma2_slope_grid Numeric vector of candidate common slope diagonal scatter entries.
 #'   Each candidate is placed directly on every slope diagonal of \eqn{\Sigma}.
 #'   Default \code{c(0.1, 0.5, 1, 2, 5, 10)}.
+#'
 #' @param posterior_point Point summary to expose as \code{Estimate}: \code{"mean"} or \code{"median"}.
 #'   Both posterior mean and median are always returned. Default \code{"mean"}.
+#'
 #' @param sigma0_intercept,sigma_global_multipliers Deprecated backward-compatible aliases for
 #'   \code{sigma2_intercept} and \code{sigma2_slope_grid}; supplied values are used directly.
 #'
-#' @param kappa_mode How to set \eqn{\kappa}. \code{"auto"} uses \code{kappa_vals} as a grid. \code{"fixed"}
-#'   uses \code{kappa_fixed} for all runs. Default \code{"auto"}.
+#' @param kappa_mode How to set \eqn{\kappa}. \code{"auto"} uses \code{kappa_vals} as a grid.
+#'   \code{"fixed"} uses \code{kappa_fixed} for all runs. Default \code{"auto"}.
 #' @param kappa_fixed Single positive value used when \code{kappa_mode="fixed"}. Default \code{1}.
-#' @param kappa_vals Numeric vector of positive \eqn{\kappa} values used when \code{kappa_mode="auto"}.
-#'   Default \code{c(0.5, 1, 2)}.
+#' @param kappa_vals Numeric vector of positive \eqn{\kappa} values used when
+#'   \code{kappa_mode="auto"}. Default \code{c(0.5, 1, 2)}.
 #'
 #' @param accept_window Numeric length-2 vector giving the acceptable MH acceptance-rate window.
 #'   Default \code{c(0.30, 0.40)}.
-#' @param accept_target Numeric; target acceptance used if no grid point falls in \code{accept_window}.
-#'   Default \code{0.35}.
+#' @param accept_target Numeric; target acceptance used if no grid point falls in
+#'   \code{accept_window}. Default \code{0.35}.
 #'
 #' @param ci_level Credible interval level in \eqn{(0,1)}. Default \code{0.95}.
 #' @param ppc_threshold Posterior predictive match threshold. Default \code{0.80}.
 #'
-#' @param tune_threshold_hi,tune_threshold_lo Burn-in acceptance thresholds for multiplicative step-size tuning.
-#'   Increase step size if acceptance \code{> hi}; decrease if \code{< lo}. Defaults \code{0.45} and \code{0.20}.
+#' @param tune_threshold_hi,tune_threshold_lo Burn-in acceptance thresholds for multiplicative
+#'   step-size tuning. Increase step size if acceptance \code{> hi}; decrease if
+#'   \code{< lo}. Defaults \code{0.45} and \code{0.20}.
 #' @param tune_interval Iterations between tuning checks during burn-in. Default \code{500}.
 #' @param verbose Logical; print brief progress messages. Default \code{FALSE}.
 #'
-#' @param n_chains Integer; number of MH chains to rerun for the selected best grid point. Default \code{1}.
-#' @param chain_seeds Optional integer vector of length \code{n_chains} giving per-chain RNG seeds for
-#'   the best-point reruns. If \code{NULL}, random seeds are generated.
-#' @param combine_chains How to combine the best-point chains for final summaries. \code{"stack"} binds post-burn
-#'   draws across chains; \code{"none"} uses only the first chain. Default \code{"stack"}.
+#' @param n_chains Integer; number of MH chains to rerun for the selected best grid point.
+#'   Default \code{1}.
+#' @param chain_seeds Optional integer vector of length \code{n_chains} giving per-chain RNG seeds
+#'   for the best-point reruns. If \code{NULL}, random seeds are generated.
+#' @param combine_chains How to combine the best-point chains for final summaries.
+#'   \code{"stack"} binds post-burn draws across chains; \code{"none"} uses only the first chain.
+#'   Default \code{"stack"}.
 #'
 #' @param return_draws Logical; if \code{TRUE}, return post-burn draws for the selected best grid point
 #'   (a matrix if one chain, else a list of matrices). Default \code{FALSE}.
 #'
-#' @param ess_threshold Minimum effective sample size required (across parameters) to declare convergence in the
-#'   single-chain case when \pkg{coda} is available. Default \code{150}.
-#' @param geweke_z_threshold Maximum allowed absolute Geweke z-score (across parameters) to declare convergence in
-#'   the single-chain case when \pkg{coda} is available. Default \code{2}.
+#' @param ess_threshold Minimum effective sample size required (across parameters) to declare
+#'   convergence in the single-chain case when \pkg{coda} is available. Default \code{150}.
+#' @param geweke_z_threshold Maximum allowed absolute Geweke z-score (across parameters) to declare
+#'   convergence in the single-chain case when \pkg{coda} is available. Default \code{2}.
 #'
 #' @return A list with:
 #' \itemize{
-#'   \item \code{best_settings}: list with chosen \code{mu} (string), \code{Sigma_diag} (string), chosen \code{kappa},
-#'         , \code{kappa_mode}, \code{acceptance_rate}, and \code{prop_matched}.
-#'   \item \code{posterior_means}, \code{posterior_medians}, and \code{posterior_estimates}:
-#'         working-scale posterior point summaries for the selected run.
-#'   \item \code{standardized_coefs_back}: data.frame per encoded column with means and CIs for standardized slopes
-#'         and back-transformed effects (\code{b_A_original}, \code{b_SAS_original}, \code{b_Long_original}).
-#'   \item \code{scaled_summary}: data.frame including Intercept with \code{Mean}, \code{SD}, \code{CI_low}, \code{CI_high},
+#'   \item \code{best_settings}: list with the chosen prior mean \code{mu},
+#'         \code{mu_center_logit_prevalence}, selected \code{mu_intercept_offset},
+#'         chosen \code{Sigma_diag}, chosen \code{kappa}, \code{kappa_mode},
+#'         \code{acceptance_rate}, and \code{prop_matched}.
+#'   \item \code{posterior_means}, \code{posterior_medians}, and
+#'         \code{posterior_estimates}: working-scale posterior point summaries for the selected run.
+#'   \item \code{standardized_coefs_back}: data.frame per encoded column with means and CIs
+#'         for standardized slopes and back-transformed effects
+#'         (\code{b_A_original}, \code{b_SAS_original}, \code{b_Long_original}).
+#'   \item \code{scaled_summary}: data.frame including Intercept with
+#'         \code{Mean}, \code{SD}, \code{CI_low}, \code{CI_high},
 #'         plus \code{Median}, selected \code{Estimate}, \code{Sig}, and \code{Star}.
-#'   \item \code{diagnostics_single}: returned only when \code{n_chains == 1} and \pkg{coda} is available.
-#'   \item \code{diagnostics_multiple}: returned only when \code{n_chains >= 2} and \pkg{coda} is available.
+#'   \item \code{grid_summary}: summary of all grid points evaluated during hyperparameter search.
+#'   \item \code{diagnostics_single}: returned only when \code{n_chains == 1}
+#'         and \pkg{coda} is available.
+#'   \item \code{diagnostics_multiple}: returned only when \code{n_chains >= 2}
+#'         and \pkg{coda} is available.
 #'   \item \code{burnin_step_trace_best}: list of burn-in tuning checkpoints per best-point chain.
 #'   \item \code{step_size_final_best}: numeric vector of final tuned step sizes per best-point chain.
-#'   \item \code{draws}: optional draws for the best-point reruns (if \code{return_draws = TRUE}).
+#'   \item \code{draws}: optional draws for the best-point reruns
+#'         (if \code{return_draws = TRUE}).
 #' }
 #'
-#' @importFrom stats quantile rbinom glm binomial coef sd plogis median
+#' @importFrom stats quantile rbinom glm binomial coef sd plogis median qlogis
 #' @export
 #'
 #' @examples
@@ -122,19 +157,21 @@
 #' y <- c(0,0,0,0, 1,1,1,1)
 #' X <- data.frame(
 #'   X1 = c(-1.86, -0.81,  1.32, -0.40,  0.91,  2.49,  0.34,  0.25),
-#'   X2 = c( 0.52,  -0.07,  0.60,  0.67, -1.39,  0.16, -1.40, -0.09)
+#'   X2 = c( 0.52, -0.07,  0.60,  0.67, -1.39,  0.16, -1.40, -0.09)
 #' )
 #'
-#' ## Single Chain
+#' ## Single chain
 #' fit_single <- MEP_latent(
 #'   y, X,
 #'   n_chains = 1,
 #'   chain_seeds = 9
 #' )
+#'
 #' fit_single$scaled_summary
+#' fit_single$best_settings
 #' fit_single$diagnostics_single
 #'
-#' ## Multiple Chains
+#' ## Multiple chains
 #' fit_multi <- MEP_latent(
 #'   y, X,
 #'   n_chains = 4,
@@ -142,8 +179,16 @@
 #'   combine_chains = "stack",
 #'   return_draws = TRUE
 #' )
+#'
 #' fit_multi$scaled_summary
+#' fit_multi$best_settings
 #' fit_multi$diagnostics_multiple
+#'
+#' ## Wider intercept-prior sensitivity range
+#' fit_wide_mu <- MEP_latent(
+#'   y, X,
+#'   mu_intercept_offsets = seq(-2, 2, length.out = 21)
+#' )
 #' }
 MEP_latent <- function(
     y, X,
@@ -151,7 +196,7 @@ MEP_latent <- function(
     n_iter = 9000,
     init_beta = 0.01,
     step_size = 0.4,
-    mu_vals = seq(-1, 1, by = 0.1),
+    mu_intercept_offsets = seq(-1, 1, by = 0.1),
     sigma2_intercept = 10,
     sigma2_slope_grid = c(0.1, 0.5, 1, 2, 5, 10),
     posterior_point = c("mean","median"),
@@ -175,77 +220,227 @@ MEP_latent <- function(
     sigma0_intercept = NULL,
     sigma_global_multipliers = NULL
 ) {
+
   `%||%` <- function(a, b) if (!is.null(a)) a else b
 
-  combine_chains <- base::match.arg(as.character(combine_chains), choices = c("stack","none"))
-  kappa_mode <- base::match.arg(as.character(kappa_mode), choices = c("auto","fixed"))
-  posterior_point <- base::match.arg(as.character(posterior_point), choices = c("mean","median"))
+  combine_chains <- base::match.arg(
+    as.character(combine_chains),
+    choices = c("stack","none")
+  )
+
+  kappa_mode <- base::match.arg(
+    as.character(kappa_mode),
+    choices = c("auto","fixed")
+  )
+
+  posterior_point <- base::match.arg(
+    as.character(posterior_point),
+    choices = c("mean","median")
+  )
 
   if (!is.null(sigma0_intercept)) {
-    warning("`sigma0_intercept` is deprecated; use `sigma2_intercept`.", call. = FALSE)
+    warning(
+      "`sigma0_intercept` is deprecated; use `sigma2_intercept`.",
+      call. = FALSE
+    )
     sigma2_intercept <- sigma0_intercept
   }
+
   if (!is.null(sigma_global_multipliers)) {
-    warning("`sigma_global_multipliers` is deprecated; use `sigma2_slope_grid`.", call. = FALSE)
+    warning(
+      "`sigma_global_multipliers` is deprecated; use `sigma2_slope_grid`.",
+      call. = FALSE
+    )
     sigma2_slope_grid <- sigma_global_multipliers
   }
-  if (!is.numeric(sigma2_intercept) || length(sigma2_intercept) != 1L || !is.finite(sigma2_intercept) || sigma2_intercept <= 0) {
-    stop("`sigma2_intercept` must be a finite positive scalar.", call. = FALSE)
-  }
-  if (!is.numeric(sigma2_slope_grid) || length(sigma2_slope_grid) < 1L || any(!is.finite(sigma2_slope_grid)) || any(sigma2_slope_grid <= 0)) {
-    stop("`sigma2_slope_grid` must contain positive finite values.", call. = FALSE)
+
+  if (
+    !is.numeric(mu_intercept_offsets) ||
+    length(mu_intercept_offsets) < 1L ||
+    any(!is.finite(mu_intercept_offsets))
+  ) {
+    stop(
+      "`mu_intercept_offsets` must contain one or more finite numeric values.",
+      call. = FALSE
+    )
   }
 
-  if (!is.numeric(burn_in) || length(burn_in) != 1L || burn_in < 0) stop("`burn_in` must be >= 0.", call. = FALSE)
-  if (!is.numeric(n_iter) || length(n_iter) != 1L || n_iter < 1) stop("`n_iter` must be >= 1 (post-burn draws).", call. = FALSE)
+  if (
+    !is.numeric(sigma2_intercept) ||
+    length(sigma2_intercept) != 1L ||
+    !is.finite(sigma2_intercept) ||
+    sigma2_intercept <= 0
+  ) {
+    stop(
+      "`sigma2_intercept` must be a finite positive scalar.",
+      call. = FALSE
+    )
+  }
+
+  if (
+    !is.numeric(sigma2_slope_grid) ||
+    length(sigma2_slope_grid) < 1L ||
+    any(!is.finite(sigma2_slope_grid)) ||
+    any(sigma2_slope_grid <= 0)
+  ) {
+    stop(
+      "`sigma2_slope_grid` must contain positive finite values.",
+      call. = FALSE
+    )
+  }
+
+  if (
+    !is.numeric(burn_in) ||
+    length(burn_in) != 1L ||
+    burn_in < 0
+  ) {
+    stop(
+      "`burn_in` must be >= 0.",
+      call. = FALSE
+    )
+  }
+
+  if (
+    !is.numeric(n_iter) ||
+    length(n_iter) != 1L ||
+    n_iter < 1
+  ) {
+    stop(
+      "`n_iter` must be >= 1 (post-burn draws).",
+      call. = FALSE
+    )
+  }
+
   burn_in <- as.integer(burn_in)
   n_iter <- as.integer(n_iter)
   n_total <- burn_in + n_iter
-  if (n_total <= 1L) stop("`burn_in + n_iter` must be > 1.", call. = FALSE)
 
-  if (!is.numeric(n_chains) || length(n_chains) != 1L || n_chains < 1) {
-    stop("`n_chains` must be a positive integer.", call. = FALSE)
+  if (n_total <= 1L) {
+    stop(
+      "`burn_in + n_iter` must be > 1.",
+      call. = FALSE
+    )
   }
+
+  if (
+    !is.numeric(n_chains) ||
+    length(n_chains) != 1L ||
+    n_chains < 1
+  ) {
+    stop(
+      "`n_chains` must be a positive integer.",
+      call. = FALSE
+    )
+  }
+
   n_chains <- as.integer(n_chains)
 
   if (!is.null(chain_seeds)) {
-    if (length(chain_seeds) != n_chains) stop("`chain_seeds` must have length `n_chains`.", call. = FALSE)
+
+    if (length(chain_seeds) != n_chains) {
+      stop(
+        "`chain_seeds` must have length `n_chains`.",
+        call. = FALSE
+      )
+    }
+
     chain_seeds <- as.integer(chain_seeds)
+
   } else {
+
     chain_seeds <- sample.int(1e9, n_chains)
+
   }
 
   safe_scale <- function(M) {
+
     cen <- suppressWarnings(colMeans(M))
-    Xc  <- sweep(M, 2, cen, FUN = "-", check.margin = FALSE)
-    sc  <- suppressWarnings(apply(M, 2, stats::sd))
+
+    Xc <- sweep(
+      M,
+      2,
+      cen,
+      FUN = "-",
+      check.margin = FALSE
+    )
+
+    sc <- suppressWarnings(
+      apply(M, 2, stats::sd)
+    )
+
     sc[!is.finite(sc) | sc == 0] <- 1
-    Xs  <- sweep(Xc, 2, sc, FUN = "/", check.margin = FALSE)
-    list(Xstd = Xs, center = cen, scale = sc)
+
+    Xs <- sweep(
+      Xc,
+      2,
+      sc,
+      FUN = "/",
+      check.margin = FALSE
+    )
+
+    list(
+      Xstd = Xs,
+      center = cen,
+      scale = sc
+    )
   }
 
-  log1pexp <- function(x) ifelse(x > 0, x + log1p(exp(-x)), log1p(exp(x)))
+  log1pexp <- function(x) {
+    ifelse(
+      x > 0,
+      x + log1p(exp(-x)),
+      log1p(exp(x))
+    )
+  }
 
   qfun_mat <- function(M, lvl) {
+
     qlo <- (1 - lvl) / 2
     qhi <- 1 - qlo
-    t(apply(M, 2, stats::quantile, probs = c(qlo, qhi), na.rm = TRUE))
+
+    t(
+      apply(
+        M,
+        2,
+        stats::quantile,
+        probs = c(qlo, qhi),
+        na.rm = TRUE
+      )
+    )
   }
 
-  summarize_post <- function(post, X_orig, ci_level, ppc_threshold, y, Xw) {
-    pm  <- colMeans(post)
+  summarize_post <- function(
+    post,
+    X_orig,
+    ci_level,
+    ppc_threshold,
+    y,
+    Xw
+  ) {
+
+    pm <- colMeans(post)
     pmed <- apply(post, 2, stats::median)
-    pest <- if (posterior_point == "mean") pm else pmed
-    se  <- apply(post, 2, stats::sd)
-    ci_scaled <- qfun_mat(post, ci_level)
+
+    pest <- if (posterior_point == "mean") {
+      pm
+    } else {
+      pmed
+    }
+
+    se <- apply(post, 2, stats::sd)
+
+    ci_scaled <- qfun_mat(
+      post,
+      ci_level
+    )
 
     scaled_summary <- data.frame(
-      Param   = colnames(Xw),
+      Param = colnames(Xw),
       Estimate = pest,
-      Mean    = pm,
-      Median  = pmed,
-      SD      = se,
-      CI_low  = ci_scaled[, 1],
+      Mean = pm,
+      Median = pmed,
+      SD = se,
+      CI_low = ci_scaled[, 1],
       CI_high = ci_scaled[, 2],
       row.names = NULL,
       check.names = FALSE
@@ -256,73 +451,159 @@ MEP_latent <- function(
     ci99 <- qfun_mat(post, 0.99)
 
     star <- rep("", ncol(post))
-    star[(ci90[, 1] > 0) | (ci90[, 2] < 0)] <- "*"
-    star[(ci95[, 1] > 0) | (ci95[, 2] < 0)] <- "**"
-    star[(ci99[, 1] > 0) | (ci99[, 2] < 0)] <- "***"
 
-    scaled_summary$Sig <- (scaled_summary$CI_low > 0) | (scaled_summary$CI_high < 0)
+    star[
+      (ci90[, 1] > 0) |
+        (ci90[, 2] < 0)
+    ] <- "*"
+
+    star[
+      (ci95[, 1] > 0) |
+        (ci95[, 2] < 0)
+    ] <- "**"
+
+    star[
+      (ci99[, 1] > 0) |
+        (ci99[, 2] < 0)
+    ] <- "***"
+
+    scaled_summary$Sig <-
+      (scaled_summary$CI_low > 0) |
+      (scaled_summary$CI_high < 0)
+
     scaled_summary$Star <- star
 
     X_orig_m <- as.matrix(X_orig)
-    s_x <- apply(X_orig_m, 2, stats::sd)
-    s_x[!is.finite(s_x) | s_x == 0] <- 1
 
-    samp_scaled <- post[, -1, drop = FALSE]
-    A_samp <- sweep(samp_scaled, 2, s_x, "/")
+    s_x <- apply(
+      X_orig_m,
+      2,
+      stats::sd
+    )
+
+    s_x[
+      !is.finite(s_x) |
+        s_x == 0
+    ] <- 1
+
+    samp_scaled <-
+      post[, -1, drop = FALSE]
+
+    A_samp <- sweep(
+      samp_scaled,
+      2,
+      s_x,
+      "/"
+    )
 
     logit_sd <- pi / sqrt(3)
-    SAS_samp  <- A_samp * logit_sd
-    Long_samp <- A_samp * (logit_sd + 1)
+
+    SAS_samp <-
+      A_samp * logit_sd
+
+    Long_samp <-
+      A_samp * (logit_sd + 1)
 
     summarise_mat <- function(M) {
-      ci <- qfun_mat(M, ci_level)
+
+      ci <- qfun_mat(
+        M,
+        ci_level
+      )
+
       mn <- colMeans(M)
       md <- apply(M, 2, stats::median)
-      est <- if (posterior_point == "mean") mn else md
-      data.frame(Estimate = est, Mean = mn, Median = md, CI_low = ci[, 1], CI_high = ci[, 2])
+
+      est <- if (posterior_point == "mean") {
+        mn
+      } else {
+        md
+      }
+
+      data.frame(
+        Estimate = est,
+        Mean = mn,
+        Median = md,
+        CI_low = ci[, 1],
+        CI_high = ci[, 2]
+      )
     }
 
     out_scaled <- summarise_mat(samp_scaled)
-    out_A      <- summarise_mat(A_samp)
-    out_SAS    <- summarise_mat(SAS_samp)
-    out_Long   <- summarise_mat(Long_samp)
+    out_A <- summarise_mat(A_samp)
+    out_SAS <- summarise_mat(SAS_samp)
+    out_Long <- summarise_mat(Long_samp)
 
     std_back <- data.frame(
-      Predictor       = colnames(X_orig),
-      Scaled          = out_scaled$Estimate,
-      Scaled_Mean     = out_scaled$Mean,
-      Scaled_Median   = out_scaled$Median,
-      Scaled_CI_low   = out_scaled$CI_low,
-      Scaled_CI_high  = out_scaled$CI_high,
-      b_A_original    = out_A$Estimate,
-      b_A_Mean        = out_A$Mean,
-      b_A_Median      = out_A$Median,
-      b_A_CI_low      = out_A$CI_low,
-      b_A_CI_high     = out_A$CI_high,
-      b_SAS_original  = out_SAS$Estimate,
-      b_SAS_Mean      = out_SAS$Mean,
-      b_SAS_Median    = out_SAS$Median,
-      b_SAS_CI_low    = out_SAS$CI_low,
-      b_SAS_CI_high   = out_SAS$CI_high,
+      Predictor = colnames(X_orig),
+
+      Scaled = out_scaled$Estimate,
+      Scaled_Mean = out_scaled$Mean,
+      Scaled_Median = out_scaled$Median,
+      Scaled_CI_low = out_scaled$CI_low,
+      Scaled_CI_high = out_scaled$CI_high,
+
+      b_A_original = out_A$Estimate,
+      b_A_Mean = out_A$Mean,
+      b_A_Median = out_A$Median,
+      b_A_CI_low = out_A$CI_low,
+      b_A_CI_high = out_A$CI_high,
+
+      b_SAS_original = out_SAS$Estimate,
+      b_SAS_Mean = out_SAS$Mean,
+      b_SAS_Median = out_SAS$Median,
+      b_SAS_CI_low = out_SAS$CI_low,
+      b_SAS_CI_high = out_SAS$CI_high,
+
       b_Long_original = out_Long$Estimate,
-      b_Long_Mean     = out_Long$Mean,
-      b_Long_Median   = out_Long$Median,
-      b_Long_CI_low   = out_Long$CI_low,
-      b_Long_CI_high  = out_Long$CI_high,
+      b_Long_Mean = out_Long$Mean,
+      b_Long_Median = out_Long$Median,
+      b_Long_CI_low = out_Long$CI_low,
+      b_Long_CI_high = out_Long$CI_high,
+
       row.names = NULL,
       check.names = FALSE
     )
 
     n_rep <- nrow(post)
     n_obs <- nrow(Xw)
-    y_rep <- matrix(0L, nrow = n_rep, ncol = n_obs)
+
+    y_rep <- matrix(
+      0L,
+      nrow = n_rep,
+      ncol = n_obs
+    )
+
     for (i in seq_len(n_rep)) {
-      pr_i <- stats::plogis(Xw %*% post[i, ])
-      y_rep[i, ] <- stats::rbinom(n_obs, 1, pr_i)
+
+      pr_i <- stats::plogis(
+        Xw %*% post[i, ]
+      )
+
+      y_rep[i, ] <- stats::rbinom(
+        n_obs,
+        1,
+        pr_i
+      )
     }
-    p_match <- colMeans(sweep(y_rep, 2, y, `==`))
-    prop_matched <- mean(p_match >= ppc_threshold, na.rm = TRUE)
-    if (!is.finite(prop_matched)) prop_matched <- 0
+
+    p_match <- colMeans(
+      sweep(
+        y_rep,
+        2,
+        y,
+        `==`
+      )
+    )
+
+    prop_matched <- mean(
+      p_match >= ppc_threshold,
+      na.rm = TRUE
+    )
+
+    if (!is.finite(prop_matched)) {
+      prop_matched <- 0
+    }
 
     list(
       posterior_means = pm,
@@ -334,158 +615,613 @@ MEP_latent <- function(
     )
   }
 
-  compute_diagnostics_single <- function(post, ess_threshold, geweke_z_threshold) {
+  compute_diagnostics_single <- function(
+    post,
+    ess_threshold,
+    geweke_z_threshold
+  ) {
+
     out <- list(
-      ess = rep(NA_real_, ncol(post)),
-      geweke_z = rep(NA_real_, ncol(post)),
+      ess = rep(
+        NA_real_,
+        ncol(post)
+      ),
+      geweke_z = rep(
+        NA_real_,
+        ncol(post)
+      ),
       ess_min = NA_real_,
       geweke_max_abs = NA_real_,
       converged = NA
     )
-    if (requireNamespace("coda", quietly = TRUE)) {
+
+    if (
+      requireNamespace(
+        "coda",
+        quietly = TRUE
+      )
+    ) {
+
       m <- coda::mcmc(post)
-      ess <- as.numeric(coda::effectiveSize(m))
-      gz  <- as.numeric(coda::geweke.diag(m)$z)
+
+      ess <- as.numeric(
+        coda::effectiveSize(m)
+      )
+
+      gz <- as.numeric(
+        coda::geweke.diag(m)$z
+      )
 
       out$ess <- ess
       out$geweke_z <- gz
-      out$ess_min <- suppressWarnings(min(ess, na.rm = TRUE))
-      out$geweke_max_abs <- suppressWarnings(max(abs(gz), na.rm = TRUE))
 
-      ess_ok <- is.finite(out$ess_min) && out$ess_min >= ess_threshold
-      gz_ok  <- is.finite(out$geweke_max_abs) && out$geweke_max_abs <= geweke_z_threshold
-      out$converged <- isTRUE(ess_ok && gz_ok)
+      out$ess_min <- suppressWarnings(
+        min(
+          ess,
+          na.rm = TRUE
+        )
+      )
+
+      out$geweke_max_abs <- suppressWarnings(
+        max(
+          abs(gz),
+          na.rm = TRUE
+        )
+      )
+
+      ess_ok <-
+        is.finite(out$ess_min) &&
+        out$ess_min >= ess_threshold
+
+      gz_ok <-
+        is.finite(out$geweke_max_abs) &&
+        out$geweke_max_abs <= geweke_z_threshold
+
+      out$converged <-
+        isTRUE(
+          ess_ok &&
+            gz_ok
+        )
     }
+
     out
   }
 
-  # y -> {0,1}
+  # ------------------------------------------------------------
+  # Normalize outcome to {0,1}
+  # ------------------------------------------------------------
+
   y_full <- y
+
   if (!is.numeric(y_full)) {
-    if (is.logical(y_full)) y_full <- as.integer(y_full)
-    else if (is.factor(y_full) || is.character(y_full)) y_full <- as.integer(factor(y_full)) - 1L
-    else stop("`y` must be numeric 0/1, logical, or 2-level factor/character.", call. = FALSE)
+
+    if (is.logical(y_full)) {
+
+      y_full <- as.integer(y_full)
+
+    } else if (
+      is.factor(y_full) ||
+      is.character(y_full)
+    ) {
+
+      y_full <-
+        as.integer(
+          factor(y_full)
+        ) - 1L
+
+    } else {
+
+      stop(
+        "`y` must be numeric 0/1, logical, or 2-level factor/character.",
+        call. = FALSE
+      )
+    }
   }
+
   y_full <- as.numeric(y_full)
-  if (anyNA(y_full)) stop("Missing values in `y` are not allowed. Please provide complete data.", call. = FALSE)
-  if (!all(y_full %in% c(0, 1))) stop("`y` must be binary (0/1) after coercion.", call. = FALSE)
-  if (length(unique(y_full)) < 2L) stop("`y` must contain both 0 and 1.", call. = FALSE)
 
-  X_raw <- as.data.frame(X, stringsAsFactors = FALSE)
-  if (nrow(X_raw) != length(y_full)) stop("Rows of X must match length of y.", call. = FALSE)
-  if (ncol(X_raw) < 1L) stop("X must have at least one predictor.", call. = FALSE)
-  if (anyNA(X_raw)) stop("Missing values in `X` are not allowed. Please provide complete data.", call. = FALSE)
+  if (anyNA(y_full)) {
+    stop(
+      "Missing values in `y` are not allowed. Please provide complete data.",
+      call. = FALSE
+    )
+  }
 
-  # encode factors, drop intercept
-  mm <- stats::model.matrix(~ ., data = X_raw)
-  X_enc <- mm[, -1, drop = FALSE]
+  if (!all(y_full %in% c(0, 1))) {
+    stop(
+      "`y` must be binary (0/1) after coercion.",
+      call. = FALSE
+    )
+  }
+
+  if (length(unique(y_full)) < 2L) {
+    stop(
+      "`y` must contain both 0 and 1.",
+      call. = FALSE
+    )
+  }
+
+  X_raw <- as.data.frame(
+    X,
+    stringsAsFactors = FALSE
+  )
+
+  if (nrow(X_raw) != length(y_full)) {
+    stop(
+      "Rows of X must match length of y.",
+      call. = FALSE
+    )
+  }
+
+  if (ncol(X_raw) < 1L) {
+    stop(
+      "X must have at least one predictor.",
+      call. = FALSE
+    )
+  }
+
+  if (anyNA(X_raw)) {
+    stop(
+      "Missing values in `X` are not allowed. Please provide complete data.",
+      call. = FALSE
+    )
+  }
+
+  # ------------------------------------------------------------
+  # Encode predictors
+  # ------------------------------------------------------------
+
+  mm <- stats::model.matrix(
+    ~ .,
+    data = X_raw
+  )
+
+  X_enc <- mm[
+    ,
+    -1,
+    drop = FALSE
+  ]
+
   X_mat <- as.matrix(X_enc)
+
   p_enc <- ncol(X_mat)
   p_all <- 1L + p_enc
 
+  # ------------------------------------------------------------
   # GLM ratio reference on standardized encoded design
+  # ------------------------------------------------------------
+
   S_ref <- safe_scale(X_mat)
+
   X_ref <- S_ref$Xstd
-  df_ref <- data.frame(y = y_full, X_ref)
-  glm_fit <- try(suppressWarnings(stats::glm(y ~ ., data = df_ref, family = stats::binomial())), silent = TRUE)
-  glm_ok <- !(inherits(glm_fit, "try-error"))
-  glm_coefs <- if (glm_ok) stats::coef(glm_fit) else rep(NA_real_, p_all)
+
+  df_ref <- data.frame(
+    y = y_full,
+    X_ref
+  )
+
+  glm_fit <- try(
+    suppressWarnings(
+      stats::glm(
+        y ~ .,
+        data = df_ref,
+        family = stats::binomial()
+      )
+    ),
+    silent = TRUE
+  )
+
+  glm_ok <-
+    !inherits(
+      glm_fit,
+      "try-error"
+    )
+
+  glm_coefs <- if (glm_ok) {
+    stats::coef(glm_fit)
+  } else {
+    rep(
+      NA_real_,
+      p_all
+    )
+  }
 
   parse_ratio <- function(x) {
-    if (is.null(x) || is.na(x) || !nzchar(x)) return(NA_real_)
-    as.numeric(strsplit(x, ",\\s*")[[1]])
+
+    if (
+      is.null(x) ||
+      is.na(x) ||
+      !nzchar(x)
+    ) {
+      return(NA_real_)
+    }
+
+    as.numeric(
+      strsplit(
+        x,
+        ",\\s*"
+      )[[1]]
+    )
   }
 
-  Ref_ratio <- if (length(glm_coefs) >= 3 && is.finite(glm_coefs[2]) && abs(glm_coefs[2]) > 0) {
-    paste(round(glm_coefs[-c(1, 2)] / glm_coefs[2], 3), collapse = ", ")
+  Ref_ratio <- if (
+    length(glm_coefs) >= 3 &&
+    is.finite(glm_coefs[2]) &&
+    abs(glm_coefs[2]) > 0
+  ) {
+
+    paste(
+      round(
+        glm_coefs[-c(1, 2)] /
+          glm_coefs[2],
+        3
+      ),
+      collapse = ", "
+    )
+
   } else {
-    NA_character_
-  }
-  ref_ratio_vec <- parse_ratio(Ref_ratio)
 
-  # grids
-  mu_grid <- lapply(mu_vals, function(m) rep(m, p_all))
-  build_sigma <- function(sigma2_slope) {
-    diag(c(sigma2_intercept, rep(sigma2_slope, p_all - 1L)), nrow = p_all, ncol = p_all)
+    NA_character_
+
   }
-  Sigma_list <- lapply(sigma2_slope_grid, build_sigma)
+
+  ref_ratio_vec <-
+    parse_ratio(
+      Ref_ratio
+    )
+
+  # ------------------------------------------------------------
+  # Prior-mean grid
+  #
+  # mu = (logit(mean(y)) + Delta, 0, ..., 0)
+  # ------------------------------------------------------------
+
+  y_bar <- mean(y_full)
+
+  mu_center <- stats::qlogis(
+    pmin(
+      pmax(
+        y_bar,
+        1e-6
+      ),
+      1 - 1e-6
+    )
+  )
+
+  mu_grid <- lapply(
+    mu_intercept_offsets,
+    function(off) {
+
+      mu <- numeric(p_all)
+
+      mu[1] <-
+        mu_center +
+        off
+
+      mu
+    }
+  )
+
+  # ------------------------------------------------------------
+  # Scatter grid
+  # ------------------------------------------------------------
+
+  build_sigma <- function(
+    sigma2_slope
+  ) {
+
+    diag(
+      c(
+        sigma2_intercept,
+        rep(
+          sigma2_slope,
+          p_all - 1L
+        )
+      ),
+      nrow = p_all,
+      ncol = p_all
+    )
+  }
+
+  Sigma_list <- lapply(
+    sigma2_slope_grid,
+    build_sigma
+  )
+
+  # ------------------------------------------------------------
+  # Kappa grid
+  # ------------------------------------------------------------
 
   if (kappa_mode == "fixed") {
-    if (!is.numeric(kappa_fixed) || length(kappa_fixed) != 1L || !is.finite(kappa_fixed) || kappa_fixed <= 0) {
-      stop("When kappa_mode = 'fixed', `kappa_fixed` must be a single positive finite number.", call. = FALSE)
+
+    if (
+      !is.numeric(kappa_fixed) ||
+      length(kappa_fixed) != 1L ||
+      !is.finite(kappa_fixed) ||
+      kappa_fixed <= 0
+    ) {
+
+      stop(
+        paste0(
+          "When kappa_mode = 'fixed', ",
+          "`kappa_fixed` must be a single positive finite number."
+        ),
+        call. = FALSE
+      )
     }
-    kappa_grid <- as.numeric(kappa_fixed)
+
+    kappa_grid <-
+      as.numeric(
+        kappa_fixed
+      )
+
   } else {
-    if (!is.numeric(kappa_vals) || length(kappa_vals) < 1L || any(!is.finite(kappa_vals)) || any(kappa_vals <= 0)) {
-      stop("When kappa_mode = 'auto', `kappa_vals` must be a numeric vector of positive finite values.", call. = FALSE)
+
+    if (
+      !is.numeric(kappa_vals) ||
+      length(kappa_vals) < 1L ||
+      any(!is.finite(kappa_vals)) ||
+      any(kappa_vals <= 0)
+    ) {
+
+      stop(
+        paste0(
+          "When kappa_mode = 'auto', ",
+          "`kappa_vals` must be a numeric vector of positive finite values."
+        ),
+        call. = FALSE
+      )
     }
+
     kappa_grid <- kappa_vals
   }
 
-  run_chain_one <- function(n_total, burn_in, init_beta, step_size,
-                            X_orig, y, mu, Sigma, kappa,
-                            tune_threshold_hi, tune_threshold_lo, tune_interval,
-                            verbose, chain_seed = NULL) {
-    if (!is.null(chain_seed)) set.seed(as.integer(chain_seed))
+  # ------------------------------------------------------------
+  # Single RW-MH chain
+  # ------------------------------------------------------------
+
+  run_chain_one <- function(
+    n_total,
+    burn_in,
+    init_beta,
+    step_size,
+    X_orig,
+    y,
+    mu,
+    Sigma,
+    kappa,
+    tune_threshold_hi,
+    tune_threshold_lo,
+    tune_interval,
+    verbose,
+    chain_seed = NULL
+  ) {
+
+    if (!is.null(chain_seed)) {
+      set.seed(
+        as.integer(chain_seed)
+      )
+    }
 
     S <- safe_scale(X_orig)
-    X_work <- S$Xstd
-    Xw <- cbind(Intercept = 1, X_work)
-    colnames(Xw) <- c("Intercept", colnames(X_orig))
 
-    cholSigma <- try(chol(Sigma), silent = TRUE)
-    if (inherits(cholSigma, "try-error")) stop("Sigma is not positive-definite.", call. = FALSE)
+    X_work <- S$Xstd
+
+    Xw <- cbind(
+      Intercept = 1,
+      X_work
+    )
+
+    colnames(Xw) <-
+      c(
+        "Intercept",
+        colnames(X_orig)
+      )
+
+    cholSigma <- try(
+      chol(Sigma),
+      silent = TRUE
+    )
+
+    if (
+      inherits(
+        cholSigma,
+        "try-error"
+      )
+    ) {
+      stop(
+        "Sigma is not positive-definite.",
+        call. = FALSE
+      )
+    }
 
     qform <- function(v) {
-      z <- backsolve(cholSigma, v, transpose = TRUE)
+
+      z <- backsolve(
+        cholSigma,
+        v,
+        transpose = TRUE
+      )
+
       sum(z * z)
     }
 
-    if (length(init_beta) == 1L) init_vec <- rep(as.numeric(init_beta), p_all)
-    else if (length(init_beta) == p_all) init_vec <- as.numeric(init_beta)
-    else stop("`init_beta` must be a scalar or a numeric vector of length (1 + p_enc).", call. = FALSE)
+    if (length(init_beta) == 1L) {
 
-    log_post <- function(beta) {
-      eta <- as.vector(Xw %*% beta)
-      ll  <- sum(-y * log1pexp(-eta) - (1 - y) * log1pexp(eta))
-      diff <- beta - mu
-      ll - 0.5 * (qform(diff)^kappa)
+      init_vec <- rep(
+        as.numeric(init_beta),
+        p_all
+      )
+
+    } else if (
+      length(init_beta) == p_all
+    ) {
+
+      init_vec <-
+        as.numeric(init_beta)
+
+    } else {
+
+      stop(
+        "`init_beta` must be a scalar or a numeric vector of length (1 + p_enc).",
+        call. = FALSE
+      )
     }
 
-    chain <- matrix(0, nrow = n_total, ncol = p_all)
-    colnames(chain) <- colnames(Xw)
-    chain[1, ] <- init_vec
-    cur_lp <- log_post(chain[1, ])
+    log_post <- function(beta) {
+
+      eta <-
+        as.vector(
+          Xw %*% beta
+        )
+
+      ll <- sum(
+        -y * log1pexp(-eta) -
+          (1 - y) * log1pexp(eta)
+      )
+
+      diff <-
+        beta - mu
+
+      ll -
+        0.5 *
+        (
+          qform(diff)^kappa
+        )
+    }
+
+    chain <- matrix(
+      0,
+      nrow = n_total,
+      ncol = p_all
+    )
+
+    colnames(chain) <-
+      colnames(Xw)
+
+    chain[1, ] <-
+      init_vec
+
+    cur_lp <-
+      log_post(
+        chain[1, ]
+      )
+
     accept <- 0L
     ss <- step_size
 
-    tune_pts <- if (burn_in >= tune_interval && tune_interval > 0) floor(burn_in / tune_interval) else 0L
-    ss_trace <- if (tune_pts > 0L) numeric(tune_pts) else numeric(0)
-    it_trace <- if (tune_pts > 0L) integer(tune_pts) else integer(0)
-    ar_trace <- if (tune_pts > 0L) numeric(tune_pts) else numeric(0)
+    tune_pts <- if (
+      burn_in >= tune_interval &&
+      tune_interval > 0
+    ) {
+      floor(
+        burn_in /
+          tune_interval
+      )
+    } else {
+      0L
+    }
+
+    ss_trace <- if (
+      tune_pts > 0L
+    ) {
+      numeric(tune_pts)
+    } else {
+      numeric(0)
+    }
+
+    it_trace <- if (
+      tune_pts > 0L
+    ) {
+      integer(tune_pts)
+    } else {
+      integer(0)
+    }
+
+    ar_trace <- if (
+      tune_pts > 0L
+    ) {
+      numeric(tune_pts)
+    } else {
+      numeric(0)
+    }
+
     idx_t <- 0L
 
-    if (isTRUE(verbose)) message("RW-MH: total iters ", n_total, "; burn-in ", burn_in)
+    if (isTRUE(verbose)) {
+      message(
+        "RW-MH: total iters ",
+        n_total,
+        "; burn-in ",
+        burn_in
+      )
+    }
 
-    for (it in 2:n_total) {
-      prop <- chain[it - 1, ] + ss * stats::rnorm(p_all)
-      prop_lp <- log_post(prop)
+    for (
+      it in 2:n_total
+    ) {
 
-      if (log(stats::runif(1)) < (prop_lp - cur_lp)) {
+      prop <-
+        chain[it - 1, ] +
+        ss *
+        stats::rnorm(p_all)
+
+      prop_lp <-
+        log_post(prop)
+
+      if (
+        log(
+          stats::runif(1)
+        ) <
+        (
+          prop_lp -
+          cur_lp
+        )
+      ) {
+
         chain[it, ] <- prop
-        cur_lp <- prop_lp
-        accept <- accept + 1L
+
+        cur_lp <-
+          prop_lp
+
+        accept <-
+          accept + 1L
+
       } else {
-        chain[it, ] <- chain[it - 1, ]
+
+        chain[it, ] <-
+          chain[it - 1, ]
       }
 
-      if (it <= burn_in && tune_interval > 0 && (it %% tune_interval) == 0) {
-        ar <- accept / it
-        if (ar > tune_threshold_hi) ss <- ss * 1.10
-        if (ar < tune_threshold_lo) ss <- ss * 0.90
+      if (
+        it <= burn_in &&
+        tune_interval > 0 &&
+        (it %% tune_interval) == 0
+      ) {
 
-        idx_t <- idx_t + 1L
-        if (idx_t <= length(ss_trace)) {
+        ar <-
+          accept / it
+
+        if (
+          ar > tune_threshold_hi
+        ) {
+          ss <- ss * 1.10
+        }
+
+        if (
+          ar < tune_threshold_lo
+        ) {
+          ss <- ss * 0.90
+        }
+
+        idx_t <-
+          idx_t + 1L
+
+        if (
+          idx_t <=
+          length(ss_trace)
+        ) {
+
           it_trace[idx_t] <- it
           ar_trace[idx_t] <- ar
           ss_trace[idx_t] <- ss
@@ -493,12 +1229,25 @@ MEP_latent <- function(
       }
     }
 
-    if (burn_in >= n_total) stop("`burn_in` must be < `burn_in + n_iter`.", call. = FALSE)
-    post <- chain[(burn_in + 1):n_total, , drop = FALSE]
+    if (burn_in >= n_total) {
+      stop(
+        "`burn_in` must be < `burn_in + n_iter`.",
+        call. = FALSE
+      )
+    }
+
+    post <-
+      chain[
+        (burn_in + 1):n_total,
+        ,
+        drop = FALSE
+      ]
 
     list(
       post = post,
-      acceptance_rate = accept / (n_total - 1),
+      acceptance_rate =
+        accept /
+        (n_total - 1),
       Xw = Xw,
       step_size_final = ss,
       burnin_step_trace = data.frame(
@@ -510,10 +1259,14 @@ MEP_latent <- function(
     )
   }
 
-  # grid search: one chain per grid point
+  # ------------------------------------------------------------
+  # Grid search
+  # ------------------------------------------------------------
+
   results_df <- data.frame(
     grid_id = integer(),
     mu = character(),
+    mu_intercept_offset = numeric(),
     sigma_diag = character(),
     kappa = numeric(),
     acceptance_rate = numeric(),
@@ -522,14 +1275,44 @@ MEP_latent <- function(
     step_size_final = numeric(),
     stringsAsFactors = FALSE
   )
+
   runs <- list()
   gid <- 1L
 
-  for (mu in mu_grid) {
-    mu_str <- paste(round(mu, 6), collapse = ", ")
-    for (Sigma in Sigma_list) {
-      sigma_diag_str <- paste(round(diag(Sigma), 6), collapse = ", ")
-      for (kappa in kappa_grid) {
+  for (
+    mu_idx in seq_along(mu_grid)
+  ) {
+
+    mu <-
+      mu_grid[[mu_idx]]
+
+    mu_offset <-
+      mu_intercept_offsets[mu_idx]
+
+    mu_str <- paste(
+      round(
+        mu,
+        6
+      ),
+      collapse = ", "
+    )
+
+    for (
+      Sigma in Sigma_list
+    ) {
+
+      sigma_diag_str <- paste(
+        round(
+          diag(Sigma),
+          6
+        ),
+        collapse = ", "
+      )
+
+      for (
+        kappa in kappa_grid
+      ) {
+
         ch <- run_chain_one(
           n_total = n_total,
           burn_in = burn_in,
@@ -556,11 +1339,28 @@ MEP_latent <- function(
           Xw = ch$Xw
         )
 
-        vals <- sum_one$posterior_means
-        ratio_str <- if (length(vals) >= 3 && is.finite(vals[2]) && abs(vals[2]) > 0) {
-          paste(round(vals[-c(1, 2)] / vals[2], 3), collapse = ", ")
+        vals <-
+          sum_one$posterior_means
+
+        ratio_str <- if (
+          length(vals) >= 3 &&
+          is.finite(vals[2]) &&
+          abs(vals[2]) > 0
+        ) {
+
+          paste(
+            round(
+              vals[-c(1, 2)] /
+                vals[2],
+              3
+            ),
+            collapse = ", "
+          )
+
         } else {
+
           NA_character_
+
         }
 
         results_df <- rbind(
@@ -568,6 +1368,7 @@ MEP_latent <- function(
           data.frame(
             grid_id = gid,
             mu = mu_str,
+            mu_intercept_offset = mu_offset,
             sigma_diag = sigma_diag_str,
             kappa = kappa,
             acceptance_rate = ch$acceptance_rate,
@@ -582,6 +1383,7 @@ MEP_latent <- function(
           grid_id = gid,
           mu = mu,
           mu_str = mu_str,
+          mu_intercept_offset = mu_offset,
           Sigma = Sigma,
           sigma_diag_str = sigma_diag_str,
           kappa = kappa,
@@ -592,46 +1394,156 @@ MEP_latent <- function(
           step_size_final = ch$step_size_final
         )
 
-        gid <- gid + 1L
+        gid <-
+          gid + 1L
       }
     }
   }
 
-  lo <- accept_window[1]
-  hi <- accept_window[2]
+  # ------------------------------------------------------------
+  # Grid-point selection
+  # ------------------------------------------------------------
+
+  lo <-
+    accept_window[1]
+
+  hi <-
+    accept_window[2]
+
   cand <- results_df[
-    is.finite(results_df$acceptance_rate) &
+    is.finite(
+      results_df$acceptance_rate
+    ) &
       results_df$acceptance_rate >= lo &
       results_df$acceptance_rate <= hi,
-    , drop = FALSE
+    ,
+    drop = FALSE
   ]
-  if (nrow(cand) == 0) {
-    idx <- which.min(abs(results_df$acceptance_rate - accept_target))
-    cand <- results_df[idx, , drop = FALSE]
+
+  if (
+    nrow(cand) == 0
+  ) {
+
+    idx <- which.min(
+      abs(
+        results_df$acceptance_rate -
+          accept_target
+      )
+    )
+
+    cand <-
+      results_df[
+        idx,
+        ,
+        drop = FALSE
+      ]
   }
 
-  cand$ratio_term <- NA_real_
-  if (!all(is.na(ref_ratio_vec))) {
-    cand$ratio_term <- vapply(cand$posterior_ratio_scaled, function(r) {
-      pv <- parse_ratio(r)
-      if (all(is.na(pv))) return(NA_real_)
-      if (length(pv) != length(ref_ratio_vec)) return(NA_real_)
-      mean(abs(pv - ref_ratio_vec))
-    }, numeric(1))
+  cand$ratio_term <-
+    NA_real_
+
+  if (
+    !all(
+      is.na(
+        ref_ratio_vec
+      )
+    )
+  ) {
+
+    cand$ratio_term <- vapply(
+      cand$posterior_ratio_scaled,
+      function(r) {
+
+        pv <-
+          parse_ratio(r)
+
+        if (
+          all(
+            is.na(pv)
+          )
+        ) {
+          return(
+            NA_real_
+          )
+        }
+
+        if (
+          length(pv) !=
+          length(ref_ratio_vec)
+        ) {
+          return(
+            NA_real_
+          )
+        }
+
+        mean(
+          abs(
+            pv -
+              ref_ratio_vec
+          )
+        )
+      },
+      numeric(1)
+    )
   }
 
-  if (any(is.finite(cand$ratio_term))) cand <- cand[order(cand$ratio_term, -cand$prop_matched), , drop = FALSE]
-  else cand <- cand[order(-cand$prop_matched), , drop = FALSE]
+  if (
+    any(
+      is.finite(
+        cand$ratio_term
+      )
+    )
+  ) {
 
-  best_id <- cand$grid_id[1]
-  best_run <- runs[[best_id]]
-  mu_best <- best_run$mu
-  Sigma_best <- best_run$Sigma
-  kappa_best <- best_run$kappa
+    cand <- cand[
+      order(
+        cand$ratio_term,
+        -cand$prop_matched
+      ),
+      ,
+      drop = FALSE
+    ]
 
-  # rerun best point with n_chains chains
-  best_chains <- vector("list", n_chains)
-  for (ch_i in seq_len(n_chains)) {
+  } else {
+
+    cand <- cand[
+      order(
+        -cand$prop_matched
+      ),
+      ,
+      drop = FALSE
+    ]
+  }
+
+  best_id <-
+    cand$grid_id[1]
+
+  best_run <-
+    runs[[best_id]]
+
+  mu_best <-
+    best_run$mu
+
+  Sigma_best <-
+    best_run$Sigma
+
+  kappa_best <-
+    best_run$kappa
+
+  # ------------------------------------------------------------
+  # Rerun selected grid point
+  # ------------------------------------------------------------
+
+  best_chains <-
+    vector(
+      "list",
+      n_chains
+    )
+
+  for (
+    ch_i in seq_len(n_chains)
+  ) {
+
     ch <- run_chain_one(
       n_total = n_total,
       burn_in = burn_in,
@@ -667,35 +1579,146 @@ MEP_latent <- function(
     )
   }
 
-  best_acceptance <- mean(vapply(best_chains, function(x) x$acceptance_rate, numeric(1)), na.rm = TRUE)
-  best_prop_matched <- mean(vapply(best_chains, function(x) x$prop_matched, numeric(1)), na.rm = TRUE)
+  best_acceptance <- mean(
+    vapply(
+      best_chains,
+      function(x) {
+        x$acceptance_rate
+      },
+      numeric(1)
+    ),
+    na.rm = TRUE
+  )
 
-  # diagnostics for multiple chains only
+  best_prop_matched <- mean(
+    vapply(
+      best_chains,
+      function(x) {
+        x$prop_matched
+      },
+      numeric(1)
+    ),
+    na.rm = TRUE
+  )
+
+  # ------------------------------------------------------------
+  # Multiple-chain diagnostics
+  # ------------------------------------------------------------
+
   diagnostics_multiple <- list(
-    rhat = rep(NA_real_, ncol(best_chains[[1]]$post)),
+    rhat = rep(
+      NA_real_,
+      ncol(
+        best_chains[[1]]$post
+      )
+    ),
     rhat_max = NA_real_,
-    ess = rep(NA_real_, ncol(best_chains[[1]]$post)),
+    ess = rep(
+      NA_real_,
+      ncol(
+        best_chains[[1]]$post
+      )
+    ),
     ess_min = NA_real_
   )
-  if (requireNamespace("coda", quietly = TRUE) && n_chains >= 2) {
-    mlist <- coda::mcmc.list(lapply(best_chains, function(x) coda::mcmc(x$post)))
-    gd <- coda::gelman.diag(mlist, autoburnin = FALSE, multivariate = FALSE)$psrf
-    diagnostics_multiple$rhat <- as.numeric(gd[, "Point est."])
-    diagnostics_multiple$rhat_max <- suppressWarnings(max(diagnostics_multiple$rhat, na.rm = TRUE))
-    ess_m <- coda::effectiveSize(mlist)
-    diagnostics_multiple$ess <- as.numeric(ess_m)
-    diagnostics_multiple$ess_min <- suppressWarnings(min(diagnostics_multiple$ess, na.rm = TRUE))
+
+  if (
+    requireNamespace(
+      "coda",
+      quietly = TRUE
+    ) &&
+    n_chains >= 2
+  ) {
+
+    mlist <- coda::mcmc.list(
+      lapply(
+        best_chains,
+        function(x) {
+          coda::mcmc(
+            x$post
+          )
+        }
+      )
+    )
+
+    gd <- coda::gelman.diag(
+      mlist,
+      autoburnin = FALSE,
+      multivariate = FALSE
+    )$psrf
+
+    diagnostics_multiple$rhat <-
+      as.numeric(
+        gd[, "Point est."]
+      )
+
+    diagnostics_multiple$rhat_max <-
+      suppressWarnings(
+        max(
+          diagnostics_multiple$rhat,
+          na.rm = TRUE
+        )
+      )
+
+    ess_m <-
+      coda::effectiveSize(
+        mlist
+      )
+
+    diagnostics_multiple$ess <-
+      as.numeric(ess_m)
+
+    diagnostics_multiple$ess_min <-
+      suppressWarnings(
+        min(
+          diagnostics_multiple$ess,
+          na.rm = TRUE
+        )
+      )
   }
 
-  # combine post-burn draws
-  if (combine_chains == "stack") post_all <- do.call(rbind, lapply(best_chains, `[[`, "post"))
-  else post_all <- best_chains[[1]]$post
+  # ------------------------------------------------------------
+  # Combine selected-chain posterior draws
+  # ------------------------------------------------------------
 
-  # build Xw for summary (consistent columns)
-  S_final <- safe_scale(X_mat)
-  X_work_final <- S_final$Xstd
-  Xw_final <- cbind(Intercept = 1, X_work_final)
-  colnames(Xw_final) <- c("Intercept", colnames(X_mat))
+  if (
+    combine_chains == "stack"
+  ) {
+
+    post_all <- do.call(
+      rbind,
+      lapply(
+        best_chains,
+        `[[`,
+        "post"
+      )
+    )
+
+  } else {
+
+    post_all <-
+      best_chains[[1]]$post
+
+  }
+
+  S_final <-
+    safe_scale(
+      X_mat
+    )
+
+  X_work_final <-
+    S_final$Xstd
+
+  Xw_final <- cbind(
+    Intercept = 1,
+    X_work_final
+  )
+
+  colnames(Xw_final) <-
+    c(
+      "Intercept",
+      colnames(X_mat)
+    )
 
   sum_final <- summarize_post(
     post = post_all,
@@ -707,40 +1730,115 @@ MEP_latent <- function(
   )
 
   draws_out <- NULL
-  if (isTRUE(return_draws)) {
-    if (n_chains == 1L) draws_out <- best_chains[[1]]$post
-    else draws_out <- lapply(best_chains, `[[`, "post")
+
+  if (
+    isTRUE(
+      return_draws
+    )
+  ) {
+
+    if (
+      n_chains == 1L
+    ) {
+
+      draws_out <-
+        best_chains[[1]]$post
+
+    } else {
+
+      draws_out <- lapply(
+        best_chains,
+        `[[`,
+        "post"
+      )
+    }
   }
 
+  # ------------------------------------------------------------
+  # Final output
+  # ------------------------------------------------------------
+
   out <- list(
+
     best_settings = list(
       mu = best_run$mu_str,
-      Sigma_diag = best_run$sigma_diag_str,
+      mu_center_logit_prevalence = mu_center,
+      mu_intercept_offset =
+        best_run$mu_intercept_offset,
+      Sigma_diag =
+        best_run$sigma_diag_str,
       kappa = kappa_best,
       kappa_mode = kappa_mode,
-      acceptance_rate = best_acceptance,
-      prop_matched = best_prop_matched
+      acceptance_rate =
+        best_acceptance,
+      prop_matched =
+        best_prop_matched
     ),
-    posterior_point = posterior_point,
-    posterior_means = sum_final$posterior_means,
-    posterior_medians = sum_final$posterior_medians,
-    posterior_estimates = sum_final$posterior_estimates,
-    standardized_coefs_back = sum_final$standardized_coefs_back,
-    scaled_summary = sum_final$scaled_summary,
-    burnin_step_trace_best = lapply(best_chains, `[[`, "burnin_step_trace"),
-    step_size_final_best = vapply(best_chains, `[[`, numeric(1), "step_size_final"),
-    draws = draws_out
+
+    grid_summary = results_df,
+
+    posterior_point =
+      posterior_point,
+
+    posterior_means =
+      sum_final$posterior_means,
+
+    posterior_medians =
+      sum_final$posterior_medians,
+
+    posterior_estimates =
+      sum_final$posterior_estimates,
+
+    standardized_coefs_back =
+      sum_final$standardized_coefs_back,
+
+    scaled_summary =
+      sum_final$scaled_summary,
+
+    burnin_step_trace_best =
+      lapply(
+        best_chains,
+        `[[`,
+        "burnin_step_trace"
+      ),
+
+    step_size_final_best =
+      vapply(
+        best_chains,
+        `[[`,
+        numeric(1),
+        "step_size_final"
+      ),
+
+    draws =
+      draws_out
   )
 
-  if (requireNamespace("coda", quietly = TRUE)) {
-    if (n_chains == 1L) {
-      out$diagnostics_single <- compute_diagnostics_single(
-        post = post_all,
-        ess_threshold = ess_threshold,
-        geweke_z_threshold = geweke_z_threshold
-      )
+  if (
+    requireNamespace(
+      "coda",
+      quietly = TRUE
+    )
+  ) {
+
+    if (
+      n_chains == 1L
+    ) {
+
+      out$diagnostics_single <-
+        compute_diagnostics_single(
+          post = post_all,
+          ess_threshold =
+            ess_threshold,
+          geweke_z_threshold =
+            geweke_z_threshold
+        )
+
     } else {
-      out$diagnostics_multiple <- diagnostics_multiple
+
+      out$diagnostics_multiple <-
+        diagnostics_multiple
+
     }
   }
 
