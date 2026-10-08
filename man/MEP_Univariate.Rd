@@ -27,7 +27,7 @@ MEP_Univariate(
   sigma2_lo = 0.15,
   posterior_point = c("mean", "median"),
   kappa_min = 1,
-  kappa_max = 2.5,
+  kappa_max = 3,
   tune_threshold_hi = 0.45,
   tune_threshold_lo = 0.2,
   tune_interval = 500,
@@ -93,7 +93,7 @@ This is exactly equivalent to the previous \code{sigma0 = 10} parameterization.}
 Both posterior mean and median are always returned. Default \code{"mean"}.}
 
 \item{kappa_min, kappa_max}{Exponential-power shapes at severity 0 and 1, blended linearly.
-Defaults \code{1} and \code{2.5}.}
+Defaults \code{1} and \code{3}.}
 
 \item{tune_threshold_hi, tune_threshold_lo}{Burn-in acceptance thresholds for auto step-size tuning.
 Increase step size if acceptance \code{> tune_threshold_hi}; decrease if \code{< tune_threshold_lo}.

@@ -15,10 +15,10 @@ MEP_mixture(
   sigma2_intercept = 10,
   sigma2_global_multipliers = c(0.1, 0.5, 1, 2, 5, 10),
   sigma2_hi = 5,
-  sigma2_lo = 0.15,
+  sigma2_lo = 0.2,
   posterior_point = c("mean", "median"),
   kappa_min = 1,
-  kappa_max = 2.5,
+  kappa_max = 3,
   kappa_delta = seq(-0.5, 0.5, by = 0.2),
   accept_window = c(0.3, 0.4),
   accept_target = 0.35,
@@ -65,12 +65,12 @@ predictor-specific slope scatter anchors. Default c(0.1, 0.5, 1, 2, 5, 10).}
 
 \item{sigma2_hi}{Slope diagonal scatter anchor under mild separation (s=0). Default 5.}
 
-\item{sigma2_lo}{Slope diagonal scatter anchor under severe separation (s=1). Default 0.15.}
+\item{sigma2_lo}{Slope diagonal scatter anchor under severe separation (s=1). Default 0.2.}
 
 \item{posterior_point}{Point summary to expose as \code{Estimate}: \code{"mean"} or \code{"median"}.
 Both posterior mean and median are always returned. Default \code{"mean"}.}
 
-\item{kappa_min, kappa_max}{EP shape at s=0 and s=1. Defaults 1 and 2.5.}
+\item{kappa_min, kappa_max}{EP shape at s=0 and s=1. Defaults 1 and 3.}
 
 \item{kappa_delta}{Offsets around anchor-average kappa to form the grid.
 Default seq(-0.5, 0.5, by = 0.2), truncated to \code{[0.5, 3]}.}
@@ -128,9 +128,7 @@ Random-Walk Metropolis-Hastings (RW-MH) sampler. This branch computes predictor-
 DISCO univariate severities and maps them to local diagonal scatter anchors and local
 shape anchors. A global multiplier grid then rescales the local slope scatter anchors,
 while the global shape grid is formed by adding \code{kappa_delta} offsets to the average
-severity-derived shape anchor. Mixture/latent classification itself is assumed to have been
-established outside this function; latent severity does not directly enter the numerical
-hyperparameter mapping here.
+severity-derived shape anchor.
 
 Arguments whose names begin with \code{sigma2_} refer to diagonal scatter quantities
 used to build \eqn{\Sigma}. The \code{sigma2_global_multipliers} values are dimensionless

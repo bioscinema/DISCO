@@ -79,7 +79,7 @@
 #' @param sigma0,sigma1_hi,sigma1_lo Deprecated backward-compatible SD-style aliases.
 #'   If supplied, they are squared internally and override the corresponding \code{sigma2_} arguments.
 #' @param kappa_min,kappa_max Exponential-power shapes at severity 0 and 1, blended linearly.
-#' Defaults \code{1} and \code{2.5}.
+#' Defaults \code{1} and \code{3}.
 #'
 #' @return A list with components:
 #' \itemize{
@@ -158,7 +158,7 @@ MEP_Univariate <- function(
     sigma2_lo = 0.15,
     posterior_point = c("mean","median"),
     kappa_min = 1,
-    kappa_max = 2.5,
+    kappa_max = 3,
     tune_threshold_hi = 0.45,
     tune_threshold_lo = 0.20,
     tune_interval = 500,

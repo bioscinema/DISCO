@@ -13,10 +13,10 @@ MEP_latent(
   step_size = 0.4,
   mu_intercept_offsets = seq(-1, 1, by = 0.1),
   sigma2_intercept = 10,
-  sigma2_slope_grid = c(0.1, 0.5, 1, 2, 5, 10),
+  sigma2_slope_grid = c(0.2, 1, 2, 4, 10, 20),
   posterior_point = c("mean", "median"),
   kappa_mode = c("auto", "fixed"),
-  kappa_vals = c(0.5, 1, 2),
+  kappa_vals = c(0.5, 1, 1.5, 2, 2.5, 3, 5),
   kappa_fixed = 1,
   accept_window = c(0.3, 0.4),
   accept_target = 0.35,
@@ -61,7 +61,7 @@ Default \code{10}.}
 
 \item{sigma2_slope_grid}{Numeric vector of candidate common slope diagonal scatter entries.
 Each candidate is placed directly on every slope diagonal of \eqn{\Sigma}.
-Default \code{c(0.1, 0.5, 1, 2, 5, 10)}.}
+Default \code{c(0.2, 1, 2, 4, 10, 20)}.}
 
 \item{posterior_point}{Point summary to expose as \code{Estimate}: \code{"mean"} or \code{"median"}.
 Both posterior mean and median are always returned. Default \code{"mean"}.}
@@ -70,7 +70,7 @@ Both posterior mean and median are always returned. Default \code{"mean"}.}
 \code{"fixed"} uses \code{kappa_fixed} for all runs. Default \code{"auto"}.}
 
 \item{kappa_vals}{Numeric vector of positive \eqn{\kappa} values used when
-\code{kappa_mode="auto"}. Default \code{c(0.5, 1, 2)}.}
+\code{kappa_mode="auto"}. Default \code{c(0.5, 1, 1.5, 2, 2.5, 3, 5)}.}
 
 \item{kappa_fixed}{Single positive value used when \code{kappa_mode="fixed"}. Default \code{1}.}
 
@@ -146,32 +146,9 @@ Global-grid MEP fit for pure latent separation
 \details{
 Fits a logistic regression model with a multivariate Exponential Power prior using a
 random-walk Metropolis-Hastings (RW-MH) sampler. This function assumes that pure latent
-separation has already been diagnosed externally; it does not compute or numerically use
-a latent severity score. Because predictor-specific univariate severities are not used in
-this branch, all slope coefficients share a common diagonal scatter entry selected from a
-global grid.
-
-The prior mean is centered at zero for all slope coefficients. The intercept prior mean is
-centered at the observed event prevalence on the logit scale and searched over a grid of
-user-specified offsets:
-
-\deqn{
-\mu =
-\left(
-\operatorname{logit}(\bar y) + \Delta,\,
-0,\ldots,0
-\right)^\top.
-}
-
-The function therefore searches over the intercept prior-location offset, the common slope
+separation has already been diagnosed externally.
+The function searches over the intercept prior-location offset, the common slope
 scatter entry, and \eqn{\kappa}.
-
-The MEP scatter matrix is parameterized directly through its diagonal entries. Arguments
-whose names begin with \code{sigma2_} are values placed directly into \eqn{\Sigma}; they
-are scatter parameters and are not, in general, marginal prior variances when
-\eqn{\kappa \ne 1}. Predictors are encoded with \code{model.matrix()} and z-scored
-internally. Summaries and credible intervals are also back-transformed to the original
-encoded predictor scale.
 
 This function assumes the user inputs complete data. If any missing values are found
 in \code{y} or \code{X}, the function stops with an error.
